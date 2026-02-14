@@ -1,17 +1,15 @@
-//
-//  ObjectDetectionQAScannerApp.swift
-//  ObjectDetectionQAScanner
-//
-//  Created by Kenichi Takei on 2026/02/14.
-//
-
 import SwiftUI
 
 @main
 struct ObjectDetectionQAScannerApp: App {
+    @StateObject private var container = AppContainer()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(container)
+                .environmentObject(container.modelStore)
+                .environmentObject(container.settingsStore)
         }
     }
 }

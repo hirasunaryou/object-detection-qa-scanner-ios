@@ -1,0 +1,10 @@
+{
+  "model_id": "yolov8n_custom_demo",
+  "display_name": "YOLOv8n Custom Demo",
+  "created_at": "2026-02-14T00:00:00Z",
+  "classes": [
+    "box",
+    "opened_box",
+    "damaged"
+  ]
+}

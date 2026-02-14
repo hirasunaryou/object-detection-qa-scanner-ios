@@ -1,24 +1,25 @@
-//
-//  ContentView.swift
-//  ObjectDetectionQAScanner
-//
-//  Created by Kenichi Takei on 2026/02/14.
-//
-
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject private var container: AppContainer
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        TabView {
+            LiveView(viewModel: container.liveViewModel)
+                .tabItem { Label("Live", systemImage: "camera.viewfinder") }
+
+            ModelsView(liveViewModel: container.liveViewModel)
+                .tabItem { Label("Models", systemImage: "shippingbox") }
+
+            ReportsView(viewModel: container.reportsViewModel, exporter: container.exporter, rootURL: container.logStore.rootDirectory)
+                .tabItem { Label("Reports", systemImage: "chart.xyaxis.line") }
         }
-        .padding()
+        .onAppear {
+            container.activateCurrentModelIfPossible()
+        }
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView().environmentObject(AppContainer())
 }
