@@ -8,7 +8,7 @@ struct ContentView: View {
             LiveView(viewModel: container.liveViewModel)
                 .tabItem { Label("Live", systemImage: "camera.viewfinder") }
 
-            ModelsView(viewModel: container.modelsViewModel, liveViewModel: container.liveViewModel)
+            ModelsView(liveViewModel: container.liveViewModel)
                 .tabItem { Label("Models", systemImage: "shippingbox") }
 
             ReportsView(viewModel: container.reportsViewModel, exporter: container.exporter, rootURL: container.logStore.rootDirectory)

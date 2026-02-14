@@ -26,49 +26,14 @@ final class ModelStore: ObservableObject {
     }
 
     func importModelZip(from zipURL: URL) throws {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("model-import-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        // iOS 16+ supports ZIP extraction through FileManager APIs.
-        try FileManager.default.unzipItem(at: zipURL, to: tempDir)
-
-        let metadataURL = tempDir.appendingPathComponent("metadata.json")
-        let metadataData = try Data(contentsOf: metadataURL)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let metadata = try decoder.decode(ModelMetadata.self, from: metadataData)
-
-        let mlmodel = tempDir.appendingPathComponent("model.mlmodel")
-        let mlpackage = tempDir.appendingPathComponent("model.mlpackage")
-        let sourceModelURL: URL
-        if FileManager.default.fileExists(atPath: mlmodel.path) {
-            sourceModelURL = mlmodel
-        } else {
-            sourceModelURL = mlpackage
-        }
-
-        let compiledTemp = try MLModel.compileModel(at: sourceModelURL)
-        let targetDir = rootDir.appendingPathComponent(metadata.modelID, isDirectory: true)
-        try? FileManager.default.removeItem(at: targetDir)
-        try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
-        let compiledTarget = targetDir.appendingPathComponent("model.mlmodelc", isDirectory: true)
-        try FileManager.default.copyItem(at: compiledTemp, to: compiledTarget)
-
-        let stored = StoredModel(
-            id: metadata.modelID,
-            metadata: metadata,
-            importedAt: Date(),
-            compiledModelPath: "\(metadata.modelID)/model.mlmodelc"
+        _ = zipURL
+        // iOS 16 互換優先のため、ZIP import は一時的に無効化。
+        // 将来は Compression / Archive 系API か独自展開ロジックで再実装予定。
+        throw NSError(
+            domain: "ModelStore",
+            code: 2001,
+            userInfo: [NSLocalizedDescriptionKey: "ZIP import is temporarily disabled on iOS 16 build."]
         )
-
-        models.removeAll { $0.id == stored.id }
-        models.append(stored)
-        models.sort { $0.importedAt > $1.importedAt }
-        if activeModelID == nil {
-            activeModelID = stored.id
-        }
-        try persistRegistry()
     }
 
     func setActive(modelID: String) {

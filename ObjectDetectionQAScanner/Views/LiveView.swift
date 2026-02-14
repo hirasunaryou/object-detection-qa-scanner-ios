@@ -31,6 +31,10 @@ struct LiveView: View {
                 .font(.headline)
                 .foregroundStyle(viewModel.isStable ? .green : .orange)
 
+            Text(viewModel.modelStatusText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             HStack {
                 Button("開封する（確定）") {
                     do {

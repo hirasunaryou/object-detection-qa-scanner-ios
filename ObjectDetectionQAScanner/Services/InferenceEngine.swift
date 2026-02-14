@@ -21,7 +21,7 @@ final class InferenceEngine {
 
     func infer(sampleBuffer: CMSampleBuffer, completion: @escaping ([Detection], Double) -> Void) {
         guard let request else {
-            completion([], 0)
+            completion([Detection](), 0)
             return
         }
 
@@ -30,13 +30,14 @@ final class InferenceEngine {
             let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up)
             do {
                 try handler.perform([request])
-                let detections = (request.results as? [VNRecognizedObjectObservation])?.compactMap { obs in
+                // NOTE: `[]` が [Any] と推論されるのを避けるため、型を明示します。
+                let detections: [Detection] = (request.results as? [VNRecognizedObjectObservation])?.compactMap { obs in
                     guard let top = obs.labels.first else { return nil }
                     return Detection(label: top.identifier, confidence: Double(top.confidence), boundingBox: obs.boundingBox)
-                } ?? []
+                } ?? [Detection]()
                 completion(detections, (CFAbsoluteTimeGetCurrent() - start) * 1000)
             } catch {
-                completion([], (CFAbsoluteTimeGetCurrent() - start) * 1000)
+                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000)
             }
         }
     }

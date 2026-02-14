@@ -30,9 +30,9 @@ struct ReportsView: View {
 
                 HStack {
                     Button("Refresh") { viewModel.refresh() }
-                    Button("ログと画像をZIP出力") {
+                    Button("ログと画像フォルダを共有") {
                         do {
-                            shareItem = ShareItem(url: try exporter.makeExportZip(from: rootURL))
+                            shareItem = ShareItem(url: try exporter.makeExportDirectory(from: rootURL))
                         } catch {
                             shareItem = nil
                         }

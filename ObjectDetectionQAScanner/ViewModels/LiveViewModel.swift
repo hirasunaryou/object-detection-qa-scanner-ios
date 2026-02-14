@@ -14,6 +14,7 @@ final class LiveViewModel: ObservableObject {
     @Published var flickerCount: Int = 0
     @Published var latestFrame: CMSampleBuffer?
     @Published var secondsToStable: Double?
+    @Published var modelStatusText: String = "No model loaded"
 
     let cameraManager: CameraManager
     private let inferenceEngine: InferenceEngine
@@ -46,6 +47,9 @@ final class LiveViewModel: ObservableObject {
         cameraManager.requestPermissionAndConfigure()
         cameraManager.start()
         stabilityEvaluator.reset()
+        if inferenceEngine.activeModelID == nil {
+            modelStatusText = "No model loaded"
+        }
     }
 
     func stop() {
@@ -58,6 +62,7 @@ final class LiveViewModel: ObservableObject {
 
     func applyModel(_ model: StoredModel, from modelStore: ModelStore) throws {
         try inferenceEngine.loadModel(modelID: model.id, compiledModelURL: modelStore.compiledURL(for: model))
+        modelStatusText = "Active model: \(model.metadata.displayName)"
         resetStabilityState()
     }
 
@@ -88,6 +93,13 @@ final class LiveViewModel: ObservableObject {
 
     private func handleFrame(_ sampleBuffer: CMSampleBuffer) async {
         latestFrame = sampleBuffer
+        if inferenceEngine.activeModelID == nil {
+            detections = []
+            isStable = false
+            stableReason = "no_model"
+            return
+        }
+
         let now = Date()
         let delta = now.timeIntervalSince(lastFrameTime)
         lastFrameTime = now

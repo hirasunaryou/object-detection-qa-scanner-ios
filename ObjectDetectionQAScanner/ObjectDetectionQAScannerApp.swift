@@ -8,6 +8,8 @@ struct ObjectDetectionQAScannerApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(container)
+                .environmentObject(container.modelStore)
+                .environmentObject(container.settingsStore)
         }
     }
 }
