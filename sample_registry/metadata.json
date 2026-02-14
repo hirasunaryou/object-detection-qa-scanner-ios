@@ -1,0 +1,6 @@
+{
+  "model_id": "yolov8_sample_001",
+  "display_name": "YOLOv8 Sample 001",
+  "created_at": "2026-02-14T00:00:00Z",
+  "classes": ["package", "label", "seal"]
+}
