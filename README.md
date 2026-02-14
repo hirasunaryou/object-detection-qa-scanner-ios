@@ -58,3 +58,19 @@ ZIP のルート直下に以下を配置してください。
 ## 注意
 - 物体検知の出力は `VNRecognizedObjectObservation` を想定しています。
 - モデル変換時は CoreML でオブジェクト検知として扱える形式にしてください。
+
+
+## いま出来ること / できないこと（重要）
+- ✅ Live: カメラ表示 / stable判定 / 確定・NGの保存 / ログ・画像の共有
+- ✅ Models: 安定判定パラメータ調整
+- ❗ Models: モデルZIP import は（現状）無効です → 次PRで有効化予定
+
+## データの保存場所
+- Application Support / QAData/
+  - scan_logs.jsonl
+  - images/（raw/overlay）
+
+## エクスポート手順（現場向け）
+1. Reports → 「ログと画像フォルダを共有」
+2. AirDrop / Files / Drive などでPCに転送
+3. PC側で scan_logs.jsonl と images/ を確認
