@@ -11,6 +11,7 @@ final class ModelStore: ObservableObject {
         case missingMetadata
         case missingModelFile
         case invalidMetadata
+        case invalidModelID
 
         var errorDescription: String? {
             switch self {
@@ -22,6 +23,8 @@ final class ModelStore: ObservableObject {
                 return "model.mlpackage または model.mlmodel が ZIP 内に見つかりません。"
             case .invalidMetadata:
                 return "metadata.json の内容を読み取れませんでした（ISO8601形式の日付を確認してください）。"
+            case .invalidModelID:
+                return "metadata.model_id に使用できない文字が含まれています（英数字、._- のみ利用可）。"
             }
         }
     }
@@ -66,6 +69,7 @@ final class ModelStore: ObservableObject {
         }
 
         let metadata = try decodeMetadata(from: metadataURL)
+        try validateModelID(metadata.modelID)
         let sourceModelURL = try resolveSourceModelURL(under: tempDir)
 
         // compileModel(at:) は .mlmodel/.mlpackage の両方を受け取れるため、入力形式の違いを吸収できる。
@@ -130,6 +134,18 @@ final class ModelStore: ObservableObject {
     private func persistActiveModelID() throws {
         guard let activeModelID, let data = activeModelID.data(using: .utf8) else { return }
         try data.write(to: activeModelURL, options: .atomic)
+    }
+
+
+    private func validateModelID(_ modelID: String) throws {
+        // モデルIDはディレクトリ名/ファイル名にも使うため、安全な文字のみ許可する。
+        // 許可: 英数字 + "." + "_" + "-"
+        let pattern = "^[A-Za-z0-9._-]+$"
+        let range = NSRange(location: 0, length: modelID.utf16.count)
+        let regex = try NSRegularExpression(pattern: pattern)
+        guard regex.firstMatch(in: modelID, options: [], range: range) != nil else {
+            throw ModelStoreError.invalidModelID
+        }
     }
 
     private func decodeMetadata(from metadataURL: URL) throws -> ModelMetadata {

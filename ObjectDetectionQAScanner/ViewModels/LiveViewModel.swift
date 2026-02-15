@@ -40,6 +40,9 @@ final class LiveViewModel: ObservableObject {
     private var isInferenceInFlight = false
     private var lastInferenceStart = Date.distantPast
     private var lastInferenceCompletion = Date.distantPast
+    // 保存時に「検出結果と同じ入力フレーム」を使うため、
+    // 推論完了時点の sampleBuffer を保持する（最新カメラフレームとは分ける）。
+    private var lastInferenceFrame: CMSampleBuffer?
     private let targetInferenceInterval: TimeInterval = 1.0 / 14.0
 
     init(
@@ -95,7 +98,8 @@ final class LiveViewModel: ObservableObject {
         guard let model = activeModelProvider() else {
             throw SaveError.noActiveModel
         }
-        guard let frame = latestFrame else {
+        // 直近のカメラ受信フレームではなく、現在の detections を算出したフレームを保存する。
+        guard let frame = lastInferenceFrame else {
             throw SaveError.noCapturedFrame
         }
 
@@ -157,6 +161,9 @@ final class LiveViewModel: ObservableObject {
 
                 self.latencyMs = latency
                 self.detections = detections
+                // detections と 1:1 で対応するフレームを更新する。
+                // ここで更新しておけば、保存時に画像と検出結果のズレが発生しない。
+                self.lastInferenceFrame = sampleBuffer
 
                 let result = self.stabilityEvaluator.evaluate(detections: detections, settings: self.settingsStore.settings)
                 self.isStable = result.isStable
