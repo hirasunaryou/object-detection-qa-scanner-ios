@@ -2,10 +2,18 @@ import Foundation
 import Combine
 import CoreML
 import ZIPFoundation
+import os
 
 // モデルの永続化レイヤ。
 // 将来クラウド同期やSQLite化する場合も、ここを差し替えることでUI層への影響を最小化できる。
 final class ModelStore: ObservableObject {
+    private static let logger = Logger(subsystem: "ObjectDetectionQAScanner", category: "ModelStore")
+
+    enum SourceModelKind: String {
+        case mlpackage
+        case mlmodel
+    }
+
     enum ModelStoreError: LocalizedError {
         case failedToUnzip
         case missingMetadata
@@ -20,7 +28,7 @@ final class ModelStore: ObservableObject {
             case .missingMetadata:
                 return "metadata.json が ZIP 内に見つかりません。"
             case .missingModelFile:
-                return "model.mlpackage または model.mlmodel が ZIP 内に見つかりません。"
+                return "ZIP のルート直下に必要なファイルがありません。model.mlpackage/ または model.mlmodel に加えて metadata.json を配置してください。"
             case .invalidMetadata:
                 return "metadata.json の内容を読み取れませんでした（ISO8601形式の日付を確認してください）。"
             case .invalidModelID:
@@ -64,7 +72,8 @@ final class ModelStore: ObservableObject {
             throw ModelStoreError.failedToUnzip
         }
 
-        guard let metadataURL = findFile(named: "metadata", withExtension: "json", under: tempDir) else {
+        let metadataURL = tempDir.appendingPathComponent("metadata.json")
+        guard isRegularFile(at: metadataURL) else {
             throw ModelStoreError.missingMetadata
         }
 
@@ -159,45 +168,46 @@ final class ModelStore: ObservableObject {
         }
     }
 
-    private func resolveSourceModelURL(under root: URL) throws -> URL {
-        if let packageURL = findItem(named: "model", withExtension: "mlpackage", under: root) {
-            return packageURL
+    static func resolveSourceModelKind(hasMLPackage: Bool, hasMLModel: Bool) throws -> SourceModelKind {
+        if hasMLPackage {
+            if hasMLModel {
+                logger.info("Both model.mlpackage and model.mlmodel found in ZIP root. Selecting model.mlpackage.")
+            } else {
+                logger.info("Selected model.mlpackage from ZIP root.")
+            }
+            return .mlpackage
         }
-        if let modelURL = findFile(named: "model", withExtension: "mlmodel", under: root) {
-            return modelURL
+
+        if hasMLModel {
+            logger.info("Selected model.mlmodel from ZIP root.")
+            return .mlmodel
         }
+
         throw ModelStoreError.missingModelFile
     }
 
-    private func findFile(named name: String, withExtension fileExtension: String, under root: URL) -> URL? {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
+    private func resolveSourceModelURL(under root: URL) throws -> URL {
+        let modelPackageURL = root.appendingPathComponent("model.mlpackage", isDirectory: true)
+        let modelFileURL = root.appendingPathComponent("model.mlmodel")
 
-        for case let fileURL as URL in enumerator {
-            if fileURL.lastPathComponent == "\(name).\(fileExtension)" {
-                return fileURL
-            }
+        let chosenKind = try Self.resolveSourceModelKind(
+            hasMLPackage: isDirectory(at: modelPackageURL),
+            hasMLModel: isRegularFile(at: modelFileURL)
+        )
+
+        switch chosenKind {
+        case .mlpackage:
+            return modelPackageURL
+        case .mlmodel:
+            return modelFileURL
         }
-        return nil
     }
 
-    private func findItem(named name: String, withExtension fileExtension: String, under root: URL) -> URL? {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
+    private func isRegularFile(at url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+    }
 
-        for case let fileURL as URL in enumerator where fileURL.lastPathComponent == "\(name).\(fileExtension)" {
-            return fileURL
-        }
-        return nil
+    private func isDirectory(at url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 }
