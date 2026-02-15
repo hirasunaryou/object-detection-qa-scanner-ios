@@ -6,6 +6,19 @@ import AVFoundation
 // Live画面のオーケストレーター。
 // カメラ -> 推論 -> 安定判定 -> UI更新/ログ保存 までを1つの責務として管理する。
 final class LiveViewModel: ObservableObject {
+    enum SaveError: LocalizedError {
+        case noCapturedFrame
+        case noActiveModel
+
+        var errorDescription: String? {
+            switch self {
+            case .noCapturedFrame:
+                return "画像フレームがまだ取得できていません。"
+            case .noActiveModel:
+                return "モデルが読み込まれていないため保存できません。"
+            }
+        }
+    }
     @Published var detections: [Detection] = []
     @Published var isStable = false
     @Published var stableReason = ""
@@ -79,11 +92,21 @@ final class LiveViewModel: ObservableObject {
     }
 
     private func save(action: ScanLogEntry.Action, reason: NGReason?) throws {
-        guard let frame = latestFrame, let model = activeModelProvider() else { return }
+        guard let model = activeModelProvider() else {
+            throw SaveError.noActiveModel
+        }
+        guard let frame = latestFrame else {
+            throw SaveError.noCapturedFrame
+        }
+
+        // 画面で調整した安定判定パラメータを、その時点のスナップショットとしてログへ残す。
+        let settingsSnapshot = settingsStore.settings
+
         _ = try logStore.saveScan(
             modelID: model.id,
             action: action,
             ngReason: reason,
+            stabilitySettings: settingsSnapshot,
             isStable: isStable,
             latencyMs: latencyMs,
             fps: fps,

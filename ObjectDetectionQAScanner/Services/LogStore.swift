@@ -22,6 +22,7 @@ final class LogStore {
         modelID: String,
         action: ScanLogEntry.Action,
         ngReason: NGReason?,
+        stabilitySettings: StabilitySettings,
         isStable: Bool,
         latencyMs: Double,
         fps: Double,
@@ -30,9 +31,13 @@ final class LogStore {
         secondsToStable: Double?,
         sampleBuffer: CMSampleBuffer
     ) throws -> ScanLogEntry {
+        // タイムスタンプ + UUID でファイル名衝突を防ぐ。
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let rawURL = imagesDir.appendingPathComponent("\(stamp)-raw.jpg")
-        let overlayURL = imagesDir.appendingPathComponent("\(stamp)-overlay.jpg")
+        let uniqueID = UUID().uuidString
+        let rawRelativePath = "images/\(stamp)-\(uniqueID)-raw.jpg"
+        let overlayRelativePath = "images/\(stamp)-\(uniqueID)-overlay.jpg"
+        let rawURL = root.appendingPathComponent(rawRelativePath)
+        let overlayURL = root.appendingPathComponent(overlayRelativePath)
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             throw NSError(domain: "LogStore", code: 1001)
@@ -56,8 +61,9 @@ final class LogStore {
             detections: detections,
             flickerCountUntilDecision: flickerCount,
             secondsToStable: secondsToStable,
-            rawImagePath: rawURL.path,
-            overlayImagePath: overlayURL.path
+            rawImagePath: rawRelativePath,
+            overlayImagePath: overlayRelativePath,
+            stabilitySettingsSnapshot: stabilitySettings
         )
 
         let encoder = JSONEncoder()
