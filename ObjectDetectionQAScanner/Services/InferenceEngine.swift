@@ -8,12 +8,18 @@ final class InferenceEngine {
     struct InferenceDebugInfo {
         let outputType: String
         let multiArrayShape: String?
+        let warnings: [String]
 
         var summaryText: String {
+            var lines: [String] = []
             if let multiArrayShape {
-                return "Output: \(outputType) (shape: \(multiArrayShape))"
+                lines.append("Output: \(outputType) (shape: \(multiArrayShape))")
+            } else {
+                lines.append("Output: \(outputType)")
             }
-            return "Output: \(outputType)"
+
+            lines.append(contentsOf: warnings)
+            return lines.joined(separator: "\n")
         }
     }
 
@@ -49,7 +55,7 @@ final class InferenceEngine {
 
     func infer(sampleBuffer: CMSampleBuffer, completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void) {
         guard let request else {
-            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", multiArrayShape: nil))
+            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", multiArrayShape: nil, warnings: []))
             return
         }
 
@@ -66,7 +72,7 @@ final class InferenceEngine {
                         guard let top = obs.labels.first else { return nil }
                         return Detection(label: top.identifier, confidence: Double(top.confidence), boundingBox: obs.boundingBox)
                     }
-                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", multiArrayShape: nil))
+                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", multiArrayShape: nil, warnings: []))
                     return
                 }
 
@@ -79,13 +85,21 @@ final class InferenceEngine {
                         modelInputSize: self.modelInputSize
                     )
                     let shapeDescription = firstMultiArray.shape.map { String(describing: $0) }.joined(separator: "x")
-                    completion(decoded, elapsedMs, InferenceDebugInfo(outputType: "multiarray", multiArrayShape: shapeDescription))
+                    completion(
+                        decoded.detections,
+                        elapsedMs,
+                        InferenceDebugInfo(
+                            outputType: "multiarray",
+                            multiArrayShape: shapeDescription,
+                            warnings: decoded.warnings
+                        )
+                    )
                     return
                 }
 
-                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", multiArrayShape: nil))
+                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", multiArrayShape: nil, warnings: []))
             } catch {
-                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error", multiArrayShape: nil))
+                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error", multiArrayShape: nil, warnings: []))
             }
         }
     }
@@ -93,9 +107,13 @@ final class InferenceEngine {
     // YOLOv8 の生出力(4+numClasses, boxes)を [Detection] へ変換する。
     // - 좌標系: モデル出力は左上原点想定のため、Vision 用(左下原点)へY軸反転する。
     // - `.scaleFill`: 正方形入力へ伸縮された座標を、明示的に元画像サイズに戻してから正規化する。
-    private func decodeYOLOv8(multiArray: MLMultiArray, imageSize: CGSize, modelInputSize: CGSize) -> [Detection] {
+    private func decodeYOLOv8(
+        multiArray: MLMultiArray,
+        imageSize: CGSize,
+        modelInputSize: CGSize
+    ) -> (detections: [Detection], warnings: [String]) {
         let shape = multiArray.shape.map { Int(truncating: $0) }
-        guard shape.count == 3 else { return [] }
+        guard shape.count == 3 else { return ([], []) }
 
         let dim1 = shape[1]
         let dim2 = shape[2]
@@ -113,8 +131,34 @@ final class InferenceEngine {
             channelsFirst = false
         }
 
-        guard channels >= 5, boxCount > 0 else { return [] }
-        let classCount = channels - 4
+        guard channels >= 5, boxCount > 0 else { return ([], []) }
+        let metadataClassesCount = classLabels.count
+        var warnings: [String] = []
+
+        // YOLOv8 は一般的に [x,y,w,h,classes...] (objectness なし) だが、
+        // 一部モデルでは [x,y,w,h,obj,classes...] を返す場合がある。
+        // metadata の class 数が 1 件不足していると channels が両レイアウトに一致するため、
+        // ここでは YOLOv8 標準の no-objectness を優先し、デバッグ警告を残す。
+        let matchesObjectnessLayout = channels == (5 + metadataClassesCount)
+        let matchesNoObjectnessWithMissingMeta = channels == (4 + (metadataClassesCount + 1))
+
+        let hasObjectness: Bool
+        let classStart: Int
+        let classCount: Int
+        if matchesObjectnessLayout && matchesNoObjectnessWithMissingMeta {
+            hasObjectness = false
+            classStart = 4
+            classCount = channels - 4
+            warnings.append("⚠️ metadata classes count may be wrong (meta=\(metadataClassesCount), outputC=\(channels)).")
+        } else if matchesObjectnessLayout {
+            hasObjectness = true
+            classStart = 5
+            classCount = channels - 5
+        } else {
+            hasObjectness = false
+            classStart = 4
+            classCount = channels - 4
+        }
 
         let strides = multiArray.strides.map { Int(truncating: $0) }
 
@@ -154,11 +198,16 @@ final class InferenceEngine {
             var bestClass = 0
             var bestScore = -Double.infinity
             for classIndex in 0..<classCount {
-                let score = valueAt(channel: 4 + classIndex, box: boxIndex)
+                let score = valueAt(channel: classStart + classIndex, box: boxIndex)
                 if score > bestScore {
                     bestScore = score
                     bestClass = classIndex
                 }
+            }
+
+            if hasObjectness {
+                let objectness = valueAt(channel: 4, box: boxIndex)
+                bestScore *= objectness
             }
 
             guard bestScore >= yoloConfidenceThreshold else { continue }
@@ -197,7 +246,7 @@ final class InferenceEngine {
         }
 
         let nms = nonMaximumSuppression(candidates, iouThreshold: yoloIouThreshold)
-        return Array(nms.prefix(yoloMaxDetections))
+        return (Array(nms.prefix(yoloMaxDetections)), warnings)
     }
 
     private func orientedImageSize(from sampleBuffer: CMSampleBuffer) -> CGSize {
