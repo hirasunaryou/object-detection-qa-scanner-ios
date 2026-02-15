@@ -119,7 +119,7 @@ final class InferenceEngine {
 
                 completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
             } catch {
-                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
+                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error: \(error.localizedDescription)", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
             }
         }
     }
@@ -151,8 +151,9 @@ final class InferenceEngine {
             channels = dim2
             boxCount = dim1
             channelsFirst = false
-        } else if dim1 > dim2 {
-            // 既知パターンに一致しない時だけ、後方互換として従来推定へフォールバックする。
+        } else if dim1 <= dim2 {
+            // 期待チャネル数が推定できないケースでは、通常 C << N であることを使い
+            // 小さい次元をチャネルとして扱う（例: 1x84x2100 -> C=84, N=2100）。
             channels = dim1
             boxCount = dim2
             channelsFirst = true
@@ -198,6 +199,15 @@ final class InferenceEngine {
             }
         }
 
+        func normalizedProbability(_ raw: Double) -> Double {
+            // CoreML 変換条件によっては class/objectness が logits のまま出る場合がある。
+            // 0...1 範囲外なら sigmoid を適用し、確率として扱える値へ正規化する。
+            if (0.0...1.0).contains(raw) {
+                return raw
+            }
+            return 1.0 / (1.0 + exp(-raw))
+        }
+
         var candidates: [Detection] = []
         candidates.reserveCapacity(min(boxCount, 200))
 
@@ -218,14 +228,14 @@ final class InferenceEngine {
             var bestClass = 0
             var bestScore = -Double.infinity
             for classIndex in 0..<classCount {
-                let score = valueAt(channel: classStart + classIndex, box: boxIndex)
+                let score = normalizedProbability(valueAt(channel: classStart + classIndex, box: boxIndex))
                 if score > bestScore {
                     bestScore = score
                     bestClass = classIndex
                 }
             }
 
-            let objectness = hasObjectness ? valueAt(channel: 4, box: boxIndex) : 1.0
+            let objectness = hasObjectness ? normalizedProbability(valueAt(channel: 4, box: boxIndex)) : 1.0
             let confidence = objectness * bestScore
             guard confidence >= confidenceThreshold else { continue }
 
