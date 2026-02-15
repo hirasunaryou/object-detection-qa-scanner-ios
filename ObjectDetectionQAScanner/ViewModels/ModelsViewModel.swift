@@ -14,6 +14,15 @@ final class ModelsViewModel: ObservableObject {
     }
 
     func importZip(url: URL) {
+        importError = nil
+
+        let needsAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if needsAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
         do {
             try modelStore.importModelZip(from: url)
         } catch {

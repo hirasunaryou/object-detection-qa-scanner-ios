@@ -1,16 +1,20 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ModelsView: View {
     @EnvironmentObject private var modelStore: ModelStore
     @EnvironmentObject private var settingsStore: SettingsStore
+    @EnvironmentObject private var modelsViewModel: ModelsViewModel
     @ObservedObject var liveViewModel: LiveViewModel
+
+    @State private var showingImporter = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Imported models") {
                     if modelStore.models.isEmpty {
-                        Text("モデル未登録です。ZIP import は iOS 16 対応のため一時停止中です。")
+                        Text("モデル未登録です。ZIP をインポートして開始してください。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -32,8 +36,9 @@ struct ModelsView: View {
                         }
                     }
 
-                    Button("ZIPをimport（一時停止）") {}
-                        .disabled(true)
+                    Button("Import ZIP") {
+                        showingImporter = true
+                    }
                 }
 
                 Section("Stability settings") {
@@ -53,6 +58,38 @@ struct ModelsView: View {
                 }
             }
             .navigationTitle("Models")
+            .fileImporter(
+                isPresented: $showingImporter,
+                allowedContentTypes: [.zip],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    modelsViewModel.importZip(url: url)
+                    if let imported = modelStore.models.first(where: { $0.id == modelStore.activeModelID }) {
+                        try? liveViewModel.applyModel(imported, from: modelStore)
+                    }
+                case .failure(let error):
+                    modelsViewModel.importError = error.localizedDescription
+                }
+            }
+            .alert("Import Failed", isPresented: importErrorBinding) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(modelsViewModel.importError ?? "Unknown error")
+            }
         }
+    }
+
+    private var importErrorBinding: Binding<Bool> {
+        Binding(
+            get: { modelsViewModel.importError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    modelsViewModel.importError = nil
+                }
+            }
+        )
     }
 }

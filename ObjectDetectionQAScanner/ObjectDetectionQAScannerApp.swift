@@ -10,6 +10,7 @@ struct ObjectDetectionQAScannerApp: App {
                 .environmentObject(container)
                 .environmentObject(container.modelStore)
                 .environmentObject(container.settingsStore)
+                .environmentObject(container.modelsViewModel)
         }
     }
 }

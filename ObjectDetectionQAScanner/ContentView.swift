@@ -21,5 +21,10 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView().environmentObject(AppContainer())
+    let container = AppContainer()
+    return ContentView()
+        .environmentObject(container)
+        .environmentObject(container.modelStore)
+        .environmentObject(container.settingsStore)
+        .environmentObject(container.modelsViewModel)
 }
