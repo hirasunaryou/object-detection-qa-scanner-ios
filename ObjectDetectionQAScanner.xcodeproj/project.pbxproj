@@ -23,7 +23,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1B2C3D4E5F6012345678901 /* ZipFoundation in Frameworks */,
+				A1B2C3D4E5F6012345678901 /* ZIPFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -49,7 +49,7 @@
 /* End PBXGroup section */
 
 /* Begin PBXBuildFile section */
-		A1B2C3D4E5F6012345678901 /* ZipFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6012345678900 /* ZipFoundation */; };
+		A1B2C3D4E5F6012345678901 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6012345678900 /* ZIPFoundation */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXNativeTarget section */
@@ -70,7 +70,7 @@
 			);
 			name = ObjectDetectionQAScanner;
 			packageProductDependencies = (
-				A1B2C3D4E5F6012345678900 /* ZipFoundation */,
+				A1B2C3D4E5F6012345678900 /* ZIPFoundation */,
 			);
 			productName = ObjectDetectionQAScanner;
 			productReference = 5BBDA2472F405310003F737F /* ObjectDetectionQAScanner.app */;
@@ -146,10 +146,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A1B2C3D4E5F6012345678900 /* ZipFoundation */ = {
+		A1B2C3D4E5F6012345678900 /* ZIPFoundation */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A1B2C3D4E5F6012345678999 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
-			productName = ZipFoundation;
+			productName = ZIPFoundation;
 		};
 /* End XCSwiftPackageProductDependency section */
 
