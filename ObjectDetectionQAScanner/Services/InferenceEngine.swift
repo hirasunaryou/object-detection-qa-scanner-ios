@@ -19,7 +19,15 @@ final class InferenceEngine {
         self.activeModelID = modelID
     }
 
-    func infer(sampleBuffer: CMSampleBuffer, completion: @escaping ([Detection], Double) -> Void) {
+    // NOTE:
+    // Visionへ渡すorientationは検出結果の座標系にも影響します。
+    // バックカメラ + portrait運用では .right を使うことで、
+    // 推論結果の正規化座標をプレビューの見た目と合わせやすくなります。
+    func infer(
+        sampleBuffer: CMSampleBuffer,
+        orientation: CGImagePropertyOrientation = .right,
+        completion: @escaping ([Detection], Double) -> Void
+    ) {
         guard let request else {
             completion([Detection](), 0)
             return
@@ -27,7 +35,7 @@ final class InferenceEngine {
 
         queue.async {
             let start = CFAbsoluteTimeGetCurrent()
-            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up)
+            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: orientation)
             do {
                 try handler.perform([request])
                 // NOTE: `[]` が [Any] と推論されるのを避けるため、型を明示します。
