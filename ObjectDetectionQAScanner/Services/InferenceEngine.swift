@@ -78,7 +78,7 @@ final class InferenceEngine {
                         imageSize: orientedSize,
                         modelInputSize: self.modelInputSize
                     )
-                    let shapeDescription = firstMultiArray.shape.map { String(truncating: $0) }.joined(separator: "x")
+                    let shapeDescription = firstMultiArray.shape.map { String(describing: $0) }.joined(separator: "x")
                     completion(decoded, elapsedMs, InferenceDebugInfo(outputType: "multiarray", multiArrayShape: shapeDescription))
                     return
                 }
