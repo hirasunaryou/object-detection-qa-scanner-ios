@@ -146,10 +146,10 @@ final class LiveViewModel: ObservableObject {
         lastInferenceStart = now
 
         if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-            // `.right` で評価しているため、見た目上の portrait 画像サイズは w/h を入れ替える。
+            // CameraManager で `.portrait` 出力に揃えているため、推論画像サイズはそのまま使う。
             let width = CVPixelBufferGetWidth(pixelBuffer)
             let height = CVPixelBufferGetHeight(pixelBuffer)
-            inferenceImageSize = CGSize(width: height, height: width)
+            inferenceImageSize = CGSize(width: width, height: height)
         }
 
         inferenceEngine.infer(sampleBuffer: sampleBuffer, confidenceThreshold: settingsStore.settings.confThreshold) { [weak self] detections, latency, debugInfo in

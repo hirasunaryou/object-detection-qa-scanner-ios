@@ -59,9 +59,9 @@ final class InferenceEngine {
 
     private let yoloIouThreshold: Double = 0.45
     private let yoloMaxDetections: Int = 20
-    // Liveプレビューは背面カメラの portrait 固定運用のため、Vision 側も同じ向きで評価する。
-    // `.up` を使うとバウンディングボックスの向きがズレるため、`.right` を利用する。
-    private let liveOrientation: CGImagePropertyOrientation = .right
+    // CameraManager 側で出力を `.portrait` に固定しているため、
+    // Vision へ渡す向きも `.up` で揃えて座標系の90度ズレを防ぐ。
+    private let liveOrientation: CGImagePropertyOrientation = .up
 
     init(debugLogStore: DebugLogStore = .shared) {
         self.debugLogStore = debugLogStore
@@ -344,8 +344,8 @@ final class InferenceEngine {
         }
         let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
         let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-        // `.right` で評価しているため portrait 基準へ揃える。
-        return CGSize(width: height, height: width)
+        // `liveOrientation = .up` で評価しているため、pixelBuffer の向きをそのまま使う。
+        return CGSize(width: width, height: height)
     }
 
     private func mapScaleFitRectToImage(
