@@ -76,6 +76,75 @@ struct ScanLogEntry: Codable, Identifiable {
     let secondsToStable: Double?
     let rawImagePath: String
     let overlayImagePath: String?
+    let stabilitySettingsSnapshot: StabilitySettings
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case createdAt
+        case modelID
+        case action
+        case ngReason
+        case isStableAtTap
+        case latencyMs
+        case fps
+        case detections
+        case flickerCountUntilDecision
+        case secondsToStable
+        case rawImagePath
+        case overlayImagePath
+        case stabilitySettingsSnapshot
+    }
+
+    init(
+        id: UUID,
+        createdAt: Date,
+        modelID: String,
+        action: Action,
+        ngReason: NGReason?,
+        isStableAtTap: Bool,
+        latencyMs: Double,
+        fps: Double,
+        detections: [Detection],
+        flickerCountUntilDecision: Int,
+        secondsToStable: Double?,
+        rawImagePath: String,
+        overlayImagePath: String?,
+        stabilitySettingsSnapshot: StabilitySettings
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.modelID = modelID
+        self.action = action
+        self.ngReason = ngReason
+        self.isStableAtTap = isStableAtTap
+        self.latencyMs = latencyMs
+        self.fps = fps
+        self.detections = detections
+        self.flickerCountUntilDecision = flickerCountUntilDecision
+        self.secondsToStable = secondsToStable
+        self.rawImagePath = rawImagePath
+        self.overlayImagePath = overlayImagePath
+        self.stabilitySettingsSnapshot = stabilitySettingsSnapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        modelID = try container.decode(String.self, forKey: .modelID)
+        action = try container.decode(Action.self, forKey: .action)
+        ngReason = try container.decodeIfPresent(NGReason.self, forKey: .ngReason)
+        isStableAtTap = try container.decode(Bool.self, forKey: .isStableAtTap)
+        latencyMs = try container.decode(Double.self, forKey: .latencyMs)
+        fps = try container.decode(Double.self, forKey: .fps)
+        detections = try container.decode([Detection].self, forKey: .detections)
+        flickerCountUntilDecision = try container.decode(Int.self, forKey: .flickerCountUntilDecision)
+        secondsToStable = try container.decodeIfPresent(Double.self, forKey: .secondsToStable)
+        rawImagePath = try container.decode(String.self, forKey: .rawImagePath)
+        overlayImagePath = try container.decodeIfPresent(String.self, forKey: .overlayImagePath)
+        // 過去ログはこのフィールドを持たないため、互換目的でデフォルト値を補う。
+        stabilitySettingsSnapshot = try container.decodeIfPresent(StabilitySettings.self, forKey: .stabilitySettingsSnapshot) ?? StabilitySettings()
+    }
 }
 
 struct ModelReport: Identifiable {
