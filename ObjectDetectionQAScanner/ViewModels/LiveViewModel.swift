@@ -152,7 +152,10 @@ final class LiveViewModel: ObservableObject {
             inferenceImageSize = CGSize(width: height, height: width)
         }
 
-        inferenceEngine.infer(sampleBuffer: sampleBuffer) { [weak self] detections, latency, debugInfo in
+        inferenceEngine.infer(
+            sampleBuffer: sampleBuffer,
+            confidenceThreshold: self.settingsStore.settings.confThreshold
+        ) { [weak self] detections, latency, debugInfo in
             Task { @MainActor in
                 guard let self else { return }
                 self.isInferenceInFlight = false
