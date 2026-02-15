@@ -3,11 +3,20 @@ import Combine
 
 @MainActor
 final class AppContainer: ObservableObject {
-    let modelStore = ModelStore()
+    let debugLogStore = DebugLogStore.shared
+    let modelStore: ModelStore
     let cameraManager = CameraManager()
-    let inferenceEngine = InferenceEngine()
-    let logStore = LogStore()
-    let exporter = Exporter()
+    let inferenceEngine: InferenceEngine
+    let logStore: LogStore
+    let exporter: Exporter
+
+
+    init() {
+        self.modelStore = ModelStore(debugLogStore: debugLogStore)
+        self.inferenceEngine = InferenceEngine(debugLogStore: debugLogStore)
+        self.logStore = LogStore(debugLogStore: debugLogStore)
+        self.exporter = Exporter(debugLogStore: debugLogStore)
+    }
 
     lazy var settingsStore = SettingsStore(url: modelStore.settingsURL)
     lazy var liveViewModel = LiveViewModel(

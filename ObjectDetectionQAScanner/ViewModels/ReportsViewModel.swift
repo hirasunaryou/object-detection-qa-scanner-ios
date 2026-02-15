@@ -4,6 +4,7 @@ import Combine
 @MainActor
 final class ReportsViewModel: ObservableObject {
     @Published var reports: [ModelReport] = []
+    @Published var qaDataSizeText: String = "0 KB"
 
     private let logStore: LogStore
 
@@ -36,5 +37,27 @@ final class ReportsViewModel: ObservableObject {
             )
         }
         .sorted { $0.modelName < $1.modelName }
+
+        qaDataSizeText = logStore.computeQADataSizeText()
+    }
+
+    func deleteImagesOnly() -> Bool {
+        do {
+            _ = try logStore.deleteImagesOnly()
+            refresh()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func deleteAllQAData() -> Bool {
+        do {
+            try logStore.deleteAllQAData()
+            refresh()
+            return true
+        } catch {
+            return false
+        }
     }
 }
