@@ -7,10 +7,12 @@ import CoreGraphics
 final class InferenceEngine {
     struct InferenceDebugInfo {
         let outputType: String
+        let preprocessMode: String?
         let multiArrayShape: String?
         let decodedCandidatesCount: Int?
         let afterNMSCount: Int?
         let sampleBBoxText: String?
+        let sampleMappedRectText: String?
 
         var summaryText: String {
             var parts: [String] = []
@@ -26,6 +28,12 @@ final class InferenceEngine {
             if let afterNMSCount {
                 parts.append("afterNMS: \(afterNMSCount)")
             }
+            if let preprocessMode {
+                parts.append("preprocess: \(preprocessMode)")
+            }
+            if let sampleMappedRectText {
+                parts.append("mappedRect(px): \(sampleMappedRectText)")
+            }
             if let sampleBBoxText {
                 parts.append("sampleBBox: \(sampleBBoxText)")
             }
@@ -39,6 +47,7 @@ final class InferenceEngine {
         let decodedCandidatesCount: Int
         let afterNMSCount: Int
         let sampleBBoxText: String?
+        let sampleMappedRectText: String?
     }
 
     private var request: VNCoreMLRequest?
@@ -58,7 +67,8 @@ final class InferenceEngine {
         let vnModel = try VNCoreMLModel(for: model)
 
         let request = VNCoreMLRequest(model: vnModel)
-        request.imageCropAndScaleOption = .scaleFill
+        // YOLO の letterbox 前処理と一致させるため、アスペクト比を保った scaleFit を使う。
+        request.imageCropAndScaleOption = .scaleFit
 
         self.request = request
         self.activeModelID = modelID
@@ -72,7 +82,7 @@ final class InferenceEngine {
 
     func infer(sampleBuffer: CMSampleBuffer, confidenceThreshold: Double, completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void) {
         guard let request else {
-            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
+            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
             return
         }
 
@@ -89,7 +99,7 @@ final class InferenceEngine {
                         guard let top = obs.labels.first else { return nil }
                         return Detection(label: top.identifier, confidence: Double(top.confidence), boundingBox: obs.boundingBox)
                     }
-                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
+                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
                     return
                 }
 
@@ -108,29 +118,31 @@ final class InferenceEngine {
                         elapsedMs,
                         InferenceDebugInfo(
                             outputType: "multiarray",
+                            preprocessMode: "scaleFit",
                             multiArrayShape: shapeDescription,
                             decodedCandidatesCount: decoded.decodedCandidatesCount,
                             afterNMSCount: decoded.afterNMSCount,
-                            sampleBBoxText: decoded.sampleBBoxText
+                            sampleBBoxText: decoded.sampleBBoxText,
+                            sampleMappedRectText: decoded.sampleMappedRectText
                         )
                     )
                     return
                 }
 
-                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
+                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
             } catch {
-                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error: \(error.localizedDescription)", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
+                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error: \(error.localizedDescription)", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
             }
         }
     }
 
     // YOLOv8 の生出力(4+numClasses, boxes)を [Detection] へ変換する。
-    // - 좌標系: モデル出力は左上原点想定のため、Vision 用(左下原点)へY軸反転する。
-    // - `.scaleFill`: 正方形入力へ伸縮された座標を、明示的に元画像サイズに戻してから正規化する。
+    // - 座標系: モデル出力は左上原点想定のため、Vision 用(左下原点)へY軸反転する。
+    // - `.scaleFit`: letterbox (余白付き) で推論された座標を、余白を差し引いて元画像へ逆変換する。
     private func decodeYOLOv8(multiArray: MLMultiArray, imageSize: CGSize, modelInputSize: CGSize, confidenceThreshold: Double) -> YOLODecodeOutput {
         let shape = multiArray.shape.map { Int(truncating: $0) }
         guard shape.count == 3 else {
-            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil)
+            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil, sampleMappedRectText: nil)
         }
 
         let dim1 = shape[1]
@@ -164,13 +176,13 @@ final class InferenceEngine {
         }
 
         guard channels >= 5, boxCount > 0 else {
-            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil)
+            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil, sampleMappedRectText: nil)
         }
         let hasObjectness = channels == expectedObjectnessChannels
         let classStart = hasObjectness ? 5 : 4
         let classCount = max(channels - classStart, 0)
         guard classCount > 0 else {
-            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil)
+            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil, sampleMappedRectText: nil)
         }
 
         let strides = multiArray.strides.map { Int(truncating: $0) }
@@ -210,6 +222,7 @@ final class InferenceEngine {
 
         var candidates: [Detection] = []
         candidates.reserveCapacity(min(boxCount, 200))
+        var sampleMappedRectText: String?
 
         for boxIndex in 0..<boxCount {
             let rawCenterX = valueAt(channel: 0, box: boxIndex)
@@ -242,8 +255,8 @@ final class InferenceEngine {
             let left = centerX - (width / 2.0)
             let top = centerY - (height / 2.0)
 
-            // `.scaleFill` でモデル入力(多くは正方形)へ変換された座標を、元の向き付き画像へ戻す。
-            let mappedRect = mapScaleFillRectToImage(
+            // `.scaleFit` (letterbox) でモデル入力へ収めた座標を、余白込みで逆変換して元画像へ戻す。
+            let mappedRect = mapScaleFitRectToImage(
                 x: left,
                 y: top,
                 width: width,
@@ -252,6 +265,17 @@ final class InferenceEngine {
                 modelInputSize: modelInputSize
             )
             guard mappedRect.width > 0, mappedRect.height > 0 else { continue }
+
+            // デバッグ用途: 1件目の候補だけ、正規化前のピクセル座標を表示して検証しやすくする。
+            if sampleMappedRectText == nil {
+                sampleMappedRectText = String(
+                    format: "x=%.1f y=%.1f w=%.1f h=%.1f",
+                    mappedRect.origin.x,
+                    mappedRect.origin.y,
+                    mappedRect.size.width,
+                    mappedRect.size.height
+                )
+            }
 
             // Vision の normalizedRect は左下原点なので、上原点のyを反転する。
             let normalizedX = mappedRect.minX / imageSize.width
@@ -281,7 +305,8 @@ final class InferenceEngine {
             detections: limited,
             decodedCandidatesCount: candidates.count,
             afterNMSCount: limited.count,
-            sampleBBoxText: sampleBBoxText
+            sampleBBoxText: sampleBBoxText,
+            sampleMappedRectText: sampleMappedRectText
         )
     }
 
@@ -295,7 +320,7 @@ final class InferenceEngine {
         return CGSize(width: height, height: width)
     }
 
-    private func mapScaleFillRectToImage(
+    private func mapScaleFitRectToImage(
         x: Double,
         y: Double,
         width: Double,
@@ -305,14 +330,31 @@ final class InferenceEngine {
     ) -> CGRect {
         let modelW = max(modelInputSize.width, 1)
         let modelH = max(modelInputSize.height, 1)
-        let scaleX = imageSize.width / modelW
-        let scaleY = imageSize.height / modelH
+        let inputScale = min(modelW / imageSize.width, modelH / imageSize.height)
+
+        // letterbox で追加されたパディング量 (モデル入力座標系)。
+        let scaledImageW = imageSize.width * inputScale
+        let scaledImageH = imageSize.height * inputScale
+        let padX = (modelW - scaledImageW) * 0.5
+        let padY = (modelH - scaledImageH) * 0.5
+
+        // 逆変換: パディングを除去してから、元画像ピクセル座標へ戻す。
+        let imageX = (x - padX) / inputScale
+        let imageY = (y - padY) / inputScale
+        let imageW = width / inputScale
+        let imageH = height / inputScale
+
+        // 推論ノイズで境界を少しはみ出るケースがあるため、元画像範囲へクリップする。
+        let clippedMinX = max(0, min(imageSize.width, imageX))
+        let clippedMinY = max(0, min(imageSize.height, imageY))
+        let clippedMaxX = max(clippedMinX, min(imageSize.width, imageX + imageW))
+        let clippedMaxY = max(clippedMinY, min(imageSize.height, imageY + imageH))
 
         return CGRect(
-            x: x * scaleX,
-            y: y * scaleY,
-            width: width * scaleX,
-            height: height * scaleY
+            x: clippedMinX,
+            y: clippedMinY,
+            width: clippedMaxX - clippedMinX,
+            height: clippedMaxY - clippedMinY
         )
     }
 

@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct LiveView: View {
+    private let previewCornerRadius: CGFloat = 14
+
     @ObservedObject var viewModel: LiveViewModel
 
     @State private var selectedNGReason: NGReason = .other
@@ -10,8 +12,9 @@ struct LiveView: View {
         VStack(spacing: 12) {
             ZStack(alignment: .topLeading) {
                 CameraPreviewView(session: viewModel.cameraManager.session)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius))
                 DetectionOverlayView(detections: viewModel.detections, imageSize: viewModel.inferenceImageSize)
+                    .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius))
 
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Inference FPS: \(viewModel.fps, specifier: "%.1f")", systemImage: "speedometer")
