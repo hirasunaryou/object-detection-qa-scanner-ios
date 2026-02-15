@@ -59,9 +59,6 @@ final class InferenceEngine {
 
     private let yoloIouThreshold: Double = 0.45
     private let yoloMaxDetections: Int = 20
-    // Liveプレビューは背面カメラの portrait 固定運用のため、Vision 側も同じ向きで評価する。
-    // `.up` を使うとバウンディングボックスの向きがズレるため、`.right` を利用する。
-    private let liveOrientation: CGImagePropertyOrientation = .right
 
     init(debugLogStore: DebugLogStore = .shared) {
         self.debugLogStore = debugLogStore
@@ -85,16 +82,22 @@ final class InferenceEngine {
         }
     }
 
-    func infer(sampleBuffer: CMSampleBuffer, confidenceThreshold: Double, completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void) {
+    func infer(
+        sampleBuffer: CMSampleBuffer,
+        confidenceThreshold: Double,
+        completion: @escaping ([Detection], Double, InferenceDebugInfo, CGSize, CGImagePropertyOrientation) -> Void
+    ) {
         guard let request else {
             debugLogStore.warn(tag: "InferenceEngine", message: "infer_skipped_no_model", fields: [:])
-            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
+            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil), .zero, .up)
             return
         }
 
         queue.async {
             let start = CFAbsoluteTimeGetCurrent()
-            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: self.liveOrientation)
+            // 端末・OS 差で pixelBuffer の縦横が変わるため、フレームごとに orientation を決める。
+            let (orientation, orientedSize) = self.frameOrientationAndSize(for: sampleBuffer)
+            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: orientation)
             do {
                 try handler.perform([request])
                 let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
@@ -114,13 +117,12 @@ final class InferenceEngine {
                             "detections_count": detections.count
                         ]
                     )
-                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
+                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil), orientedSize, orientation)
                     return
                 }
 
                 if let featureObservations = request.results as? [VNCoreMLFeatureValueObservation],
                    let firstMultiArray = featureObservations.compactMap({ $0.featureValue.multiArrayValue }).first {
-                    let orientedSize = self.orientedImageSize(from: sampleBuffer)
                     let decoded = self.decodeYOLOv8(
                         multiArray: firstMultiArray,
                         imageSize: orientedSize,
@@ -150,16 +152,18 @@ final class InferenceEngine {
                             afterNMSCount: decoded.afterNMSCount,
                             sampleBBoxText: decoded.sampleBBoxText,
                             sampleMappedRectText: decoded.sampleMappedRectText
-                        )
+                        ),
+                        orientedSize,
+                        orientation
                     )
                     return
                 }
 
                 self.debugLogStore.warn(tag: "InferenceEngine", message: "infer_result_unknown", fields: ["preprocess_mode": "scaleFit"])
-                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
+                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil), orientedSize, orientation)
             } catch {
                 self.debugLogStore.error(tag: "InferenceEngine", message: "infer_error", fields: ["error": error.localizedDescription])
-                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error: \(error.localizedDescription)", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
+                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error: \(error.localizedDescription)", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil), orientedSize, orientation)
             }
         }
     }
@@ -338,14 +342,19 @@ final class InferenceEngine {
         )
     }
 
-    private func orientedImageSize(from sampleBuffer: CMSampleBuffer) -> CGSize {
+    private func frameOrientationAndSize(for sampleBuffer: CMSampleBuffer) -> (CGImagePropertyOrientation, CGSize) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            return CGSize(width: 1, height: 1)
+            return (.up, .zero)
         }
         let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
         let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-        // `.right` で評価しているため portrait 基準へ揃える。
-        return CGSize(width: height, height: width)
+
+        // すでに縦長のフレームなら回転不要。
+        if height >= width {
+            return (.up, CGSize(width: width, height: height))
+        }
+        // 横長フレームのみ .right で portrait 基準へ合わせる。
+        return (.right, CGSize(width: height, height: width))
     }
 
     private func mapScaleFitRectToImage(

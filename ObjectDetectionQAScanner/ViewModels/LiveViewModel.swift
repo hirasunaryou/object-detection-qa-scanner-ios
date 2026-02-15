@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import ImageIO
 
 @MainActor
 // Live画面のオーケストレーター。
@@ -44,6 +45,8 @@ final class LiveViewModel: ObservableObject {
     // 保存時に「検出結果と同じ入力フレーム」を使うため、
     // 推論完了時点の sampleBuffer を保持する（最新カメラフレームとは分ける）。
     private var lastInferenceFrame: CMSampleBuffer?
+    // 保存画像の向きも推論時と揃えるため、最後に使用した orientation を保持する。
+    private var lastInferenceOrientation: CGImagePropertyOrientation = .up
     private let targetInferenceInterval: TimeInterval = 1.0 / 14.0
 
     init(
@@ -122,7 +125,8 @@ final class LiveViewModel: ObservableObject {
             detections: detections,
             flickerCount: flickerCount,
             secondsToStable: secondsToStable,
-            sampleBuffer: frame
+            sampleBuffer: frame,
+            inferenceOrientation: lastInferenceOrientation
         )
         resetStabilityState()
     }
@@ -145,14 +149,7 @@ final class LiveViewModel: ObservableObject {
         isInferenceInFlight = true
         lastInferenceStart = now
 
-        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-            // `.right` で評価しているため、見た目上の portrait 画像サイズは w/h を入れ替える。
-            let width = CVPixelBufferGetWidth(pixelBuffer)
-            let height = CVPixelBufferGetHeight(pixelBuffer)
-            inferenceImageSize = CGSize(width: height, height: width)
-        }
-
-        inferenceEngine.infer(sampleBuffer: sampleBuffer, confidenceThreshold: settingsStore.settings.confThreshold) { [weak self] detections, latency, debugInfo in
+        inferenceEngine.infer(sampleBuffer: sampleBuffer, confidenceThreshold: settingsStore.settings.confThreshold) { [weak self] detections, latency, debugInfo, orientedSize, orientation in
             Task { @MainActor in
                 guard let self else { return }
                 self.isInferenceInFlight = false
@@ -167,6 +164,9 @@ final class LiveViewModel: ObservableObject {
                 self.latencyMs = latency
                 self.detections = detections
                 self.inferenceDebugText = debugInfo.summaryText
+                // overlay は推論時の orientation/size と同一値を使う。
+                self.inferenceImageSize = orientedSize
+                self.lastInferenceOrientation = orientation
                 // detections と 1:1 で対応するフレームを更新する。
                 // ここで更新しておけば、保存時に画像と検出結果のズレが発生しない。
                 self.lastInferenceFrame = sampleBuffer

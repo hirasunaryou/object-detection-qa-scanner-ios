@@ -22,6 +22,10 @@ final class PreviewUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer.videoGravity = .resizeAspectFill
+        // プレビューの見た目と推論の座標系を揃えるため、表示向きも portrait 固定にする。
+        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
     }
 }
 
