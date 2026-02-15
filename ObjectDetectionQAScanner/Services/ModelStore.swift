@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 import CoreML
-import ZipFoundation
+import ZIPFoundation
 
 // モデルの永続化レイヤ。
 // 将来クラウド同期やSQLite化する場合も、ここを差し替えることでUI層への影響を最小化できる。
@@ -55,6 +55,7 @@ final class ModelStore: ObservableObject {
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
         do {
+            // ZIPFoundation のAPIでZIPを安全に展開する（iOS 16対応）。
             try FileManager.default.unzipItem(at: zipURL, to: tempDir)
         } catch {
             throw ModelStoreError.failedToUnzip
