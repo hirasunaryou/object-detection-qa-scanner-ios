@@ -14,6 +14,7 @@ final class ModelsViewModel: ObservableObject {
     }
 
     func importZip(url: URL) {
+        importError = nil
         do {
             try modelStore.importModelZip(from: url)
         } catch {

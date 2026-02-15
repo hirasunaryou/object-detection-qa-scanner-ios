@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A1B2C3D4E5F60718293A4B5E /* ZipFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B5D /* ZipFoundation */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		5BBDA2472F405310003F737F /* ObjectDetectionQAScanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ObjectDetectionQAScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D4E5F60718293A4B5E /* ZipFoundation in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = ObjectDetectionQAScanner;
 			packageProductDependencies = (
+				A1B2C3D4E5F60718293A4B5D /* ZipFoundation */,
 			);
 			productName = ObjectDetectionQAScanner;
 			productReference = 5BBDA2472F405310003F737F /* ObjectDetectionQAScanner.app */;
@@ -98,6 +104,9 @@
 			productRefGroup = 5BBDA2482F405310003F737F /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+			packageReferences = (
+				A1B2C3D4E5F60718293A4B5C /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+			);
 			targets = (
 				5BBDA2462F405310003F737F /* ObjectDetectionQAScanner */,
 			);
@@ -124,6 +133,25 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A1B2C3D4E5F60718293A4B5C /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.19;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A1B2C3D4E5F60718293A4B5D /* ZipFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1B2C3D4E5F60718293A4B5C /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZipFoundation;
+		};
+/* End XCSwiftPackageProductDependency section */
 /* Begin XCBuildConfiguration section */
 		5BBDA2502F405312003F737F /* Debug */ = {
 			isa = XCBuildConfiguration;

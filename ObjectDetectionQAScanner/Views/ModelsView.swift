@@ -1,16 +1,19 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ModelsView: View {
     @EnvironmentObject private var modelStore: ModelStore
     @EnvironmentObject private var settingsStore: SettingsStore
+    @ObservedObject var viewModel: ModelsViewModel
     @ObservedObject var liveViewModel: LiveViewModel
+    @State private var isImporterPresented = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Imported models") {
                     if modelStore.models.isEmpty {
-                        Text("モデル未登録です。ZIP import は iOS 16 対応のため一時停止中です。")
+                        Text("モデル未登録です。ZIPをimportして利用を開始してください。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -32,8 +35,9 @@ struct ModelsView: View {
                         }
                     }
 
-                    Button("ZIPをimport（一時停止）") {}
-                        .disabled(true)
+                    Button("Import ZIP") {
+                        isImporterPresented = true
+                    }
                 }
 
                 Section("Stability settings") {
@@ -53,6 +57,43 @@ struct ModelsView: View {
                 }
             }
             .navigationTitle("Models")
+            .fileImporter(
+                isPresented: $isImporterPresented,
+                allowedContentTypes: [.zip],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let selectedURL = urls.first else { return }
+                    let didStart = selectedURL.startAccessingSecurityScopedResource()
+                    defer {
+                        if didStart {
+                            selectedURL.stopAccessingSecurityScopedResource()
+                        }
+                    }
+                    viewModel.importZip(url: selectedURL)
+                    if let activeID = modelStore.activeModelID,
+                       let activeModel = modelStore.models.first(where: { $0.id == activeID }) {
+                        try? liveViewModel.applyModel(activeModel, from: modelStore)
+                    }
+                case .failure(let error):
+                    viewModel.importError = error.localizedDescription
+                }
+            }
+            .alert("Import failed", isPresented: Binding(
+                get: { viewModel.importError != nil },
+                set: { newValue in
+                    if !newValue {
+                        viewModel.importError = nil
+                    }
+                }
+            )) {
+                Button("OK", role: .cancel) {
+                    viewModel.importError = nil
+                }
+            } message: {
+                Text(viewModel.importError ?? "Unknown error")
+            }
         }
     }
 }
