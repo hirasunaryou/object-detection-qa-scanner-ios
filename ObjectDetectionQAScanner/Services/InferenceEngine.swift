@@ -55,12 +55,17 @@ final class InferenceEngine {
     private(set) var activeModelID: String?
     private var classLabels: [String] = []
     private var modelInputSize: CGSize = CGSize(width: 640, height: 640)
+    private let debugLogStore: DebugLogStore
 
     private let yoloIouThreshold: Double = 0.45
     private let yoloMaxDetections: Int = 20
     // Liveプレビューは背面カメラの portrait 固定運用のため、Vision 側も同じ向きで評価する。
     // `.up` を使うとバウンディングボックスの向きがズレるため、`.right` を利用する。
     private let liveOrientation: CGImagePropertyOrientation = .right
+
+    init(debugLogStore: DebugLogStore = .shared) {
+        self.debugLogStore = debugLogStore
+    }
 
     func loadModel(modelID: String, compiledModelURL: URL, classLabels: [String]) throws {
         let model = try MLModel(contentsOf: compiledModelURL)
@@ -82,6 +87,7 @@ final class InferenceEngine {
 
     func infer(sampleBuffer: CMSampleBuffer, confidenceThreshold: Double, completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void) {
         guard let request else {
+            debugLogStore.warn(tag: "InferenceEngine", message: "infer_skipped_no_model", fields: [:])
             completion([Detection](), 0, InferenceDebugInfo(outputType: "none", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
             return
         }
@@ -99,6 +105,15 @@ final class InferenceEngine {
                         guard let top = obs.labels.first else { return nil }
                         return Detection(label: top.identifier, confidence: Double(top.confidence), boundingBox: obs.boundingBox)
                     }
+                    self.debugLogStore.info(
+                        tag: "InferenceEngine",
+                        message: "infer_result",
+                        fields: [
+                            "output_type": "recognized",
+                            "preprocess_mode": "vision_default",
+                            "detections_count": detections.count
+                        ]
+                    )
                     completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
                     return
                 }
@@ -113,6 +128,17 @@ final class InferenceEngine {
                         confidenceThreshold: confidenceThreshold
                     )
                     let shapeDescription = firstMultiArray.shape.map { String(describing: $0) }.joined(separator: "x")
+                    self.debugLogStore.info(
+                        tag: "InferenceEngine",
+                        message: "infer_result",
+                        fields: [
+                            "output_type": "multiarray",
+                            "preprocess_mode": "scaleFit",
+                            "multiarray_shape": shapeDescription,
+                            "decoded_candidates": decoded.decodedCandidatesCount,
+                            "after_nms": decoded.afterNMSCount
+                        ]
+                    )
                     completion(
                         decoded.detections,
                         elapsedMs,
@@ -129,8 +155,10 @@ final class InferenceEngine {
                     return
                 }
 
+                self.debugLogStore.warn(tag: "InferenceEngine", message: "infer_result_unknown", fields: ["preprocess_mode": "scaleFit"])
                 completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
             } catch {
+                self.debugLogStore.error(tag: "InferenceEngine", message: "infer_error", fields: ["error": error.localizedDescription])
                 completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error: \(error.localizedDescription)", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
             }
         }

@@ -11,12 +11,17 @@ struct StabilityResult {
 
 // 安定判定の状態機械: フレーム間の連続性と揺れ(IoU)を評価する中心ロジック。
 final class StabilityEvaluator {
+    private let debugLogStore: DebugLogStore
     private var stableStreak = 0
     private var flickerCount = 0
     private var lastLabel: String?
     private var previousBox: CGRect?
     private var sessionStart = Date()
     private var stableTimestamp: Date?
+
+    init(debugLogStore: DebugLogStore = .shared) {
+        self.debugLogStore = debugLogStore
+    }
 
     func reset() {
         stableStreak = 0
@@ -33,17 +38,25 @@ final class StabilityEvaluator {
         var passes = true
 
         if detections.isEmpty {
-            passes = false
             reason = "no_detection"
             flickerCount += 1
             stableStreak = 0
+            debugLogStore.warn(tag: "StabilityEvaluator", message: "stability_result", fields: [
+                "reason": reason,
+                "threshold_frames": settings.stableFramesRequired,
+                "threshold_conf": settings.confThreshold
+            ])
             return result(isStable: false, reason: reason)
         }
 
         if !settings.allowMultipleDetections && detections.count != 1 {
-            passes = false
             reason = "multiple_detection"
             stableStreak = 0
+            debugLogStore.warn(tag: "StabilityEvaluator", message: "stability_result", fields: [
+                "reason": reason,
+                "allow_multiple": settings.allowMultipleDetections,
+                "detections_count": detections.count
+            ])
             return result(isStable: false, reason: reason)
         }
 
@@ -85,7 +98,17 @@ final class StabilityEvaluator {
             stableStreak = 0
         }
 
-        return result(isStable: stableStreak >= settings.stableFramesRequired, reason: reason)
+        let stable = stableStreak >= settings.stableFramesRequired
+        debugLogStore.info(tag: "StabilityEvaluator", message: "stability_result", fields: [
+            "reason": reason,
+            "stable": stable,
+            "stable_streak": stableStreak,
+            "threshold_conf": settings.confThreshold,
+            "threshold_min_box": settings.minBoxAreaRatio,
+            "threshold_frames": settings.stableFramesRequired,
+            "iou_threshold": 0.7
+        ])
+        return result(isStable: stable, reason: reason)
     }
 
     private func result(isStable: Bool, reason: String) -> StabilityResult {

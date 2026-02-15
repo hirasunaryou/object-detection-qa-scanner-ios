@@ -44,8 +44,10 @@ final class ModelStore: ObservableObject {
     private let registryURL: URL
     private let activeModelURL: URL
     private let rootDir: URL
+    private let debugLogStore: DebugLogStore
 
-    init() {
+    init(debugLogStore: DebugLogStore = .shared) {
+        self.debugLogStore = debugLogStore
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         rootDir = support.appendingPathComponent("ModelRegistry", isDirectory: true)
         registryURL = rootDir.appendingPathComponent("registry.json")
@@ -60,6 +62,11 @@ final class ModelStore: ObservableObject {
     }
 
     func importModelZip(from zipURL: URL) throws {
+        debugLogStore.info(
+            tag: "ModelStore",
+            message: "model_import_start",
+            fields: ["zip_path": zipURL.path]
+        )
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("model-import-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -69,17 +76,25 @@ final class ModelStore: ObservableObject {
             // ZIPFoundation のAPIでZIPを安全に展開する（iOS 16対応）。
             try FileManager.default.unzipItem(at: zipURL, to: tempDir)
         } catch {
+            debugLogStore.error(tag: "ModelStore", message: "model_import_unzip_failed", fields: ["zip_path": zipURL.path, "error": error.localizedDescription])
             throw ModelStoreError.failedToUnzip
         }
 
         let metadataURL = tempDir.appendingPathComponent("metadata.json")
         guard isRegularFile(at: metadataURL) else {
+            debugLogStore.warn(tag: "ModelStore", message: "model_import_validation_error", fields: ["reason": "missing_metadata", "zip_path": zipURL.path])
             throw ModelStoreError.missingMetadata
         }
 
         let metadata = try decodeMetadata(from: metadataURL)
         try validateModelID(metadata.modelID)
-        let sourceModelURL = try resolveSourceModelURL(under: tempDir)
+        let sourceModelURL: URL
+        do {
+            sourceModelURL = try resolveSourceModelURL(under: tempDir)
+        } catch {
+            debugLogStore.warn(tag: "ModelStore", message: "model_import_validation_error", fields: ["reason": "missing_model_file", "zip_path": zipURL.path])
+            throw error
+        }
 
         // compileModel(at:) は .mlmodel/.mlpackage の両方を受け取れるため、入力形式の違いを吸収できる。
         let compiledTempURL = try MLModel.compileModel(at: sourceModelURL)
@@ -105,6 +120,15 @@ final class ModelStore: ObservableObject {
         activeModelID = stored.id
         try persistRegistry()
         try persistActiveModelID()
+        debugLogStore.info(
+            tag: "ModelStore",
+            message: "model_import_end",
+            fields: [
+                "model_id": metadata.modelID,
+                "classes_count": metadata.classes.count,
+                "compiled_path": targetCompiledURL.path
+            ]
+        )
     }
 
     func setActive(modelID: String) {
@@ -153,6 +177,7 @@ final class ModelStore: ObservableObject {
         let range = NSRange(location: 0, length: modelID.utf16.count)
         let regex = try NSRegularExpression(pattern: pattern)
         guard regex.firstMatch(in: modelID, options: [], range: range) != nil else {
+            debugLogStore.warn(tag: "ModelStore", message: "model_import_validation_error", fields: ["reason": "invalid_model_id", "model_id": modelID])
             throw ModelStoreError.invalidModelID
         }
     }
@@ -164,6 +189,7 @@ final class ModelStore: ObservableObject {
             decoder.dateDecodingStrategy = .iso8601
             return try decoder.decode(ModelMetadata.self, from: data)
         } catch {
+            debugLogStore.warn(tag: "ModelStore", message: "model_import_validation_error", fields: ["reason": "invalid_metadata", "path": metadataURL.path])
             throw ModelStoreError.invalidMetadata
         }
     }

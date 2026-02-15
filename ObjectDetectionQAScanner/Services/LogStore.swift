@@ -21,10 +21,14 @@ final class LogStore {
     private let root: URL
     private let logsURL: URL
     private let imagesDir: URL
+    private let debugLogStore: DebugLogStore
+    private let maxStorageBytes: Int64 = 500 * 1024 * 1024
+    private let targetStorageBytesAfterRotation: Int64 = 400 * 1024 * 1024
     // Vision推論と保存画像で向きを統一するため、ここでも .right を明示する。
     private let inferenceOrientation: CGImagePropertyOrientation = .right
 
-    init() {
+    init(debugLogStore: DebugLogStore = .shared) {
+        self.debugLogStore = debugLogStore
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         root = support.appendingPathComponent("QAData", isDirectory: true)
         logsURL = root.appendingPathComponent("scan_logs.jsonl")
@@ -48,6 +52,9 @@ final class LogStore {
         secondsToStable: Double?,
         sampleBuffer: CMSampleBuffer
     ) throws -> ScanLogEntry {
+        let imageCountBeforeSave = (try? imageFileRecordsSortedByCreationDate(ascending: true).count) ?? 0
+        debugLogStore.info(tag: "LogStore", message: "save_scan_start", fields: ["model_id": modelID, "action": action.rawValue, "detections_count": detections.count, "image_files_before": imageCountBeforeSave])
+
         // タイムスタンプ + UUID でファイル名衝突を防ぐ。
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let uniqueID = UUID().uuidString
@@ -57,18 +64,21 @@ final class LogStore {
         let overlayURL = root.appendingPathComponent(overlayRelativePath)
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            debugLogStore.error(tag: "LogStore", message: "save_scan_error", fields: ["reason": "failed_to_extract_pixel_buffer", "model_id": modelID])
             throw LogStoreError.failedToExtractPixelBuffer
         }
 
         // Vision(.right) と同じ向きに正規化した画像を保存する。
         let rawImage = Self.image(from: pixelBuffer, orientation: inferenceOrientation)
         guard let rawJPEG = rawImage.jpegData(compressionQuality: 0.9) else {
+            debugLogStore.error(tag: "LogStore", message: "save_scan_error", fields: ["reason": "failed_to_encode_raw_jpeg", "model_id": modelID])
             throw LogStoreError.failedToEncodeJPEG(kind: "raw")
         }
         try rawJPEG.write(to: rawURL, options: .atomic)
 
         let overlayImage = Self.drawDetections(on: rawImage, detections: detections)
         guard let overlayJPEG = overlayImage.jpegData(compressionQuality: 0.9) else {
+            debugLogStore.error(tag: "LogStore", message: "save_scan_error", fields: ["reason": "failed_to_encode_overlay_jpeg", "model_id": modelID])
             throw LogStoreError.failedToEncodeJPEG(kind: "overlay")
         }
         try overlayJPEG.write(to: overlayURL, options: .atomic)
@@ -102,6 +112,21 @@ final class LogStore {
         handle.write(line)
         handle.write("\n".data(using: .utf8)!)
 
+        try autoRotateIfNeeded()
+
+        let imageCountAfterSave = (try? imageFileRecordsSortedByCreationDate(ascending: true).count) ?? 0
+        debugLogStore.info(
+            tag: "LogStore",
+            message: "save_scan_end",
+            fields: [
+                "model_id": modelID,
+                "raw_image_path": rawRelativePath,
+                "overlay_image_path": overlayRelativePath,
+                "detections_count": detections.count,
+                "image_files_after": imageCountAfterSave
+            ]
+        )
+
         return entry
     }
 
@@ -112,6 +137,96 @@ final class LogStore {
         return text
             .split(separator: "\n")
             .compactMap { try? decoder.decode(ScanLogEntry.self, from: Data($0.utf8)) }
+    }
+
+    func computeQADataSizeBytes() -> Int64 {
+        (try? directorySize(at: root)) ?? 0
+    }
+
+    func computeQADataSizeText() -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: computeQADataSizeBytes())
+    }
+
+    @discardableResult
+    func deleteImagesOnly() throws -> Int {
+        let imageFiles = try imageFileRecordsSortedByCreationDate(ascending: true)
+        var removedCount = 0
+        for file in imageFiles {
+            try FileManager.default.removeItem(at: file.url)
+            removedCount += 1
+        }
+        debugLogStore.info(tag: "LogStore", message: "delete_images_only", fields: ["removed_files": removedCount])
+        return removedCount
+    }
+
+    func deleteAllQAData() throws {
+        if FileManager.default.fileExists(atPath: root.path) {
+            try FileManager.default.removeItem(at: root)
+        }
+        try FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+        debugLogStore.info(tag: "LogStore", message: "delete_all_qadata", fields: ["root_path": root.path])
+    }
+
+    private func autoRotateIfNeeded() throws {
+        let initialSize = computeQADataSizeBytes()
+        guard initialSize > maxStorageBytes else { return }
+
+        var currentSize = initialSize
+        var removedFiles = 0
+        let candidates = try imageFileRecordsSortedByCreationDate(ascending: true)
+
+        debugLogStore.warn(tag: "LogStore", message: "auto_rotation_start", fields: ["current_size_bytes": initialSize, "max_size_bytes": maxStorageBytes, "target_size_bytes": targetStorageBytesAfterRotation, "image_files": candidates.count])
+
+        for record in candidates {
+            try FileManager.default.removeItem(at: record.url)
+            removedFiles += 1
+            currentSize -= record.size
+            if currentSize <= targetStorageBytesAfterRotation {
+                break
+            }
+        }
+
+        debugLogStore.info(tag: "LogStore", message: "auto_rotation_end", fields: ["removed_files": removedFiles, "final_size_bytes": max(currentSize, 0)])
+    }
+
+    private func imageFileRecordsSortedByCreationDate(ascending: Bool) throws -> [(url: URL, createdAt: Date, size: Int64)] {
+        guard FileManager.default.fileExists(atPath: imagesDir.path) else { return [] }
+        let urls = try FileManager.default.contentsOfDirectory(at: imagesDir, includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey, .isRegularFileKey], options: [.skipsHiddenFiles])
+
+        let records = urls.compactMap { url -> (url: URL, createdAt: Date, size: Int64)? in
+            guard let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey, .isRegularFileKey]),
+                  values.isRegularFile == true
+            else {
+                return nil
+            }
+            let timestamp = values.creationDate ?? values.contentModificationDate ?? .distantPast
+            let size = Int64(values.fileSize ?? 0)
+            return (url: url, createdAt: timestamp, size: size)
+        }
+
+        return records.sorted { ascending ? $0.createdAt < $1.createdAt : $0.createdAt > $1.createdAt }
+    }
+
+    private func directorySize(at rootURL: URL) throws -> Int64 {
+        guard FileManager.default.fileExists(atPath: rootURL.path) else { return 0 }
+        guard let enumerator = FileManager.default.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            if values.isRegularFile == true {
+                total += Int64(values.fileSize ?? 0)
+            }
+        }
+        return total
     }
 
     private static func image(from pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> UIImage {
