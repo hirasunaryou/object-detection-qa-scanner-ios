@@ -9,7 +9,7 @@ final class CameraManager: NSObject, ObservableObject {
     private let output = AVCaptureVideoDataOutput()
     private let queue = DispatchQueue(label: "camera.frame.queue", qos: .userInitiated)
 
-    var onFrame: ((CMSampleBuffer) -> Void)?
+    var onFrame: ((CMSampleBuffer, OrientationResolver.FrameOrientation) -> Void)?
 
     func requestPermissionAndConfigure() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -72,6 +72,10 @@ final class CameraManager: NSObject, ObservableObject {
 
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        onFrame?(sampleBuffer)
+        let orientation = OrientationResolver.resolve(
+            videoOrientation: connection.videoOrientation,
+            isMirrored: connection.isVideoMirrored
+        )
+        onFrame?(sampleBuffer, orientation)
     }
 }

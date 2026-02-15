@@ -24,8 +24,6 @@ final class LogStore {
     private let debugLogStore: DebugLogStore
     private let maxStorageBytes: Int64 = 500 * 1024 * 1024
     private let targetStorageBytesAfterRotation: Int64 = 400 * 1024 * 1024
-    // Vision推論と保存画像で向きを統一するため、ここでも .right を明示する。
-    private let inferenceOrientation: CGImagePropertyOrientation = .right
 
     init(debugLogStore: DebugLogStore = .shared) {
         self.debugLogStore = debugLogStore
@@ -50,7 +48,8 @@ final class LogStore {
         detections: [Detection],
         flickerCount: Int,
         secondsToStable: Double?,
-        sampleBuffer: CMSampleBuffer
+        sampleBuffer: CMSampleBuffer,
+        exifOrientation: CGImagePropertyOrientation
     ) throws -> ScanLogEntry {
         let imageCountBeforeSave = (try? imageFileRecordsSortedByCreationDate(ascending: true).count) ?? 0
         debugLogStore.info(tag: "LogStore", message: "save_scan_start", fields: ["model_id": modelID, "action": action.rawValue, "detections_count": detections.count, "image_files_before": imageCountBeforeSave])
@@ -68,8 +67,8 @@ final class LogStore {
             throw LogStoreError.failedToExtractPixelBuffer
         }
 
-        // Vision(.right) と同じ向きに正規化した画像を保存する。
-        let rawImage = Self.image(from: pixelBuffer, orientation: inferenceOrientation)
+        // 推論時と同じ EXIF 向きで正規化して保存し、Live オーバーレイとの座標整合を保つ。
+        let rawImage = Self.image(from: pixelBuffer, orientation: exifOrientation)
         guard let rawJPEG = rawImage.jpegData(compressionQuality: 0.9) else {
             debugLogStore.error(tag: "LogStore", message: "save_scan_error", fields: ["reason": "failed_to_encode_raw_jpeg", "model_id": modelID])
             throw LogStoreError.failedToEncodeJPEG(kind: "raw")

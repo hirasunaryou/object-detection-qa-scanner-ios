@@ -14,7 +14,7 @@ struct LiveView: View {
             ZStack(alignment: .topLeading) {
                 CameraPreviewView(session: viewModel.cameraManager.session)
                     .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius))
-                DetectionOverlayView(detections: viewModel.detections, imageSize: viewModel.inferenceImageSize)
+                DetectionOverlayView(detections: viewModel.detections, imageSize: viewModel.orientedImageSize)
                     .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius))
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -41,6 +41,7 @@ struct LiveView: View {
                         Label("Inference FPS: \(viewModel.fps, specifier: "%.1f")", systemImage: "speedometer")
                         Label("Inference Latency: \(viewModel.latencyMs, specifier: "%.1f") ms", systemImage: "timer")
                         Text(viewModel.inferenceDebugText)
+                        Text(viewModel.frameOrientationDebugText)
                         Text("Reason: \(viewModel.stableReason)")
                         Text("Flicker: \(viewModel.flickerCount)")
                     }
