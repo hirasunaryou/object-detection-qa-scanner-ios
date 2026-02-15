@@ -16,6 +16,7 @@ struct LiveView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Inference FPS: \(viewModel.fps, specifier: "%.1f")", systemImage: "speedometer")
                     Label("Inference Latency: \(viewModel.latencyMs, specifier: "%.1f") ms", systemImage: "timer")
+                    Text(viewModel.inferenceDebugText)
                     Text("Reason: \(viewModel.stableReason)")
                     Text("Flicker: \(viewModel.flickerCount)")
                 }
