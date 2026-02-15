@@ -8,13 +8,37 @@ final class InferenceEngine {
     struct InferenceDebugInfo {
         let outputType: String
         let multiArrayShape: String?
+        let decodedCandidatesCount: Int?
+        let afterNMSCount: Int?
+        let sampleBBoxText: String?
 
         var summaryText: String {
+            var parts: [String] = []
             if let multiArrayShape {
-                return "Output: \(outputType) (shape: \(multiArrayShape))"
+                parts.append("Output: \(outputType) (shape: \(multiArrayShape))")
+            } else {
+                parts.append("Output: \(outputType)")
             }
-            return "Output: \(outputType)"
+
+            if let decodedCandidatesCount {
+                parts.append("decodedCandidates: \(decodedCandidatesCount)")
+            }
+            if let afterNMSCount {
+                parts.append("afterNMS: \(afterNMSCount)")
+            }
+            if let sampleBBoxText {
+                parts.append("sampleBBox: \(sampleBBoxText)")
+            }
+
+            return parts.joined(separator: " | ")
         }
+    }
+
+    private struct YOLODecodeOutput {
+        let detections: [Detection]
+        let decodedCandidatesCount: Int
+        let afterNMSCount: Int
+        let sampleBBoxText: String?
     }
 
     private var request: VNCoreMLRequest?
@@ -23,7 +47,6 @@ final class InferenceEngine {
     private var classLabels: [String] = []
     private var modelInputSize: CGSize = CGSize(width: 640, height: 640)
 
-    private let yoloConfidenceThreshold: Double = 0.35
     private let yoloIouThreshold: Double = 0.45
     private let yoloMaxDetections: Int = 20
     // Liveプレビューは背面カメラの portrait 固定運用のため、Vision 側も同じ向きで評価する。
@@ -47,9 +70,9 @@ final class InferenceEngine {
         }
     }
 
-    func infer(sampleBuffer: CMSampleBuffer, completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void) {
+    func infer(sampleBuffer: CMSampleBuffer, confidenceThreshold: Double, completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void) {
         guard let request else {
-            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", multiArrayShape: nil))
+            completion([Detection](), 0, InferenceDebugInfo(outputType: "none", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
             return
         }
 
@@ -66,7 +89,7 @@ final class InferenceEngine {
                         guard let top = obs.labels.first else { return nil }
                         return Detection(label: top.identifier, confidence: Double(top.confidence), boundingBox: obs.boundingBox)
                     }
-                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", multiArrayShape: nil))
+                    completion(detections, elapsedMs, InferenceDebugInfo(outputType: "recognized", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
                     return
                 }
 
@@ -76,16 +99,27 @@ final class InferenceEngine {
                     let decoded = self.decodeYOLOv8(
                         multiArray: firstMultiArray,
                         imageSize: orientedSize,
-                        modelInputSize: self.modelInputSize
+                        modelInputSize: self.modelInputSize,
+                        confidenceThreshold: confidenceThreshold
                     )
                     let shapeDescription = firstMultiArray.shape.map { String(describing: $0) }.joined(separator: "x")
-                    completion(decoded, elapsedMs, InferenceDebugInfo(outputType: "multiarray", multiArrayShape: shapeDescription))
+                    completion(
+                        decoded.detections,
+                        elapsedMs,
+                        InferenceDebugInfo(
+                            outputType: "multiarray",
+                            multiArrayShape: shapeDescription,
+                            decodedCandidatesCount: decoded.decodedCandidatesCount,
+                            afterNMSCount: decoded.afterNMSCount,
+                            sampleBBoxText: decoded.sampleBBoxText
+                        )
+                    )
                     return
                 }
 
-                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", multiArrayShape: nil))
+                completion([Detection](), elapsedMs, InferenceDebugInfo(outputType: "unknown", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
             } catch {
-                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error", multiArrayShape: nil))
+                completion([Detection](), (CFAbsoluteTimeGetCurrent() - start) * 1000, InferenceDebugInfo(outputType: "error", multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil))
             }
         }
     }
@@ -93,17 +127,32 @@ final class InferenceEngine {
     // YOLOv8 の生出力(4+numClasses, boxes)を [Detection] へ変換する。
     // - 좌標系: モデル出力は左上原点想定のため、Vision 用(左下原点)へY軸反転する。
     // - `.scaleFill`: 正方形入力へ伸縮された座標を、明示的に元画像サイズに戻してから正規化する。
-    private func decodeYOLOv8(multiArray: MLMultiArray, imageSize: CGSize, modelInputSize: CGSize) -> [Detection] {
+    private func decodeYOLOv8(multiArray: MLMultiArray, imageSize: CGSize, modelInputSize: CGSize, confidenceThreshold: Double) -> YOLODecodeOutput {
         let shape = multiArray.shape.map { Int(truncating: $0) }
-        guard shape.count == 3 else { return [] }
+        guard shape.count == 3 else {
+            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil)
+        }
 
         let dim1 = shape[1]
         let dim2 = shape[2]
+        let expectedChannels = 4 + classLabels.count
+        let expectedObjectnessChannels = 5 + classLabels.count
 
         let channels: Int
         let boxCount: Int
         let channelsFirst: Bool
-        if dim1 > dim2 {
+        // YOLOv8の出力レイアウトは [1, C, N] または [1, N, C] があり得る。
+        // C(チャネル数)は「4 + class数」または objectness 付きの「5 + class数」で判定する。
+        if dim1 == expectedChannels || dim1 == expectedObjectnessChannels {
+            channels = dim1
+            boxCount = dim2
+            channelsFirst = true
+        } else if dim2 == expectedChannels || dim2 == expectedObjectnessChannels {
+            channels = dim2
+            boxCount = dim1
+            channelsFirst = false
+        } else if dim1 > dim2 {
+            // 既知パターンに一致しない時だけ、後方互換として従来推定へフォールバックする。
             channels = dim1
             boxCount = dim2
             channelsFirst = true
@@ -113,8 +162,15 @@ final class InferenceEngine {
             channelsFirst = false
         }
 
-        guard channels >= 5, boxCount > 0 else { return [] }
-        let classCount = channels - 4
+        guard channels >= 5, boxCount > 0 else {
+            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil)
+        }
+        let hasObjectness = channels == expectedObjectnessChannels
+        let classStart = hasObjectness ? 5 : 4
+        let classCount = max(channels - classStart, 0)
+        guard classCount > 0 else {
+            return YOLODecodeOutput(detections: [], decodedCandidatesCount: 0, afterNMSCount: 0, sampleBBoxText: nil)
+        }
 
         let strides = multiArray.strides.map { Int(truncating: $0) }
 
@@ -146,22 +202,32 @@ final class InferenceEngine {
         candidates.reserveCapacity(min(boxCount, 200))
 
         for boxIndex in 0..<boxCount {
-            let centerX = valueAt(channel: 0, box: boxIndex)
-            let centerY = valueAt(channel: 1, box: boxIndex)
-            let width = valueAt(channel: 2, box: boxIndex)
-            let height = valueAt(channel: 3, box: boxIndex)
+            let rawCenterX = valueAt(channel: 0, box: boxIndex)
+            let rawCenterY = valueAt(channel: 1, box: boxIndex)
+            let rawWidth = valueAt(channel: 2, box: boxIndex)
+            let rawHeight = valueAt(channel: 3, box: boxIndex)
+
+            // 一部モデルは bbox を 0...1 正規化で返すため、入力解像度へ拡大してから通常処理へ流す。
+            let maxCoordinate = max(rawCenterX, rawCenterY, rawWidth, rawHeight)
+            let usesNormalizedCoordinates = maxCoordinate <= 2.0
+            let centerX = usesNormalizedCoordinates ? rawCenterX * modelInputSize.width : rawCenterX
+            let centerY = usesNormalizedCoordinates ? rawCenterY * modelInputSize.height : rawCenterY
+            let width = usesNormalizedCoordinates ? rawWidth * modelInputSize.width : rawWidth
+            let height = usesNormalizedCoordinates ? rawHeight * modelInputSize.height : rawHeight
 
             var bestClass = 0
             var bestScore = -Double.infinity
             for classIndex in 0..<classCount {
-                let score = valueAt(channel: 4 + classIndex, box: boxIndex)
+                let score = valueAt(channel: classStart + classIndex, box: boxIndex)
                 if score > bestScore {
                     bestScore = score
                     bestClass = classIndex
                 }
             }
 
-            guard bestScore >= yoloConfidenceThreshold else { continue }
+            let objectness = hasObjectness ? valueAt(channel: 4, box: boxIndex) : 1.0
+            let confidence = objectness * bestScore
+            guard confidence >= confidenceThreshold else { continue }
 
             let left = centerX - (width / 2.0)
             let top = centerY - (height / 2.0)
@@ -193,11 +259,20 @@ final class InferenceEngine {
             guard clamped.width > 0, clamped.height > 0 else { continue }
 
             let label = classLabels.indices.contains(bestClass) ? classLabels[bestClass] : "class_\(bestClass)"
-            candidates.append(Detection(label: label, confidence: bestScore, boundingBox: clamped))
+            candidates.append(Detection(label: label, confidence: confidence, boundingBox: clamped))
         }
 
         let nms = nonMaximumSuppression(candidates, iouThreshold: yoloIouThreshold)
-        return Array(nms.prefix(yoloMaxDetections))
+        let limited = Array(nms.prefix(yoloMaxDetections))
+        let sampleBBoxText = limited.first.map {
+            String(format: "x=%.3f y=%.3f w=%.3f h=%.3f", $0.boundingBox.origin.x, $0.boundingBox.origin.y, $0.boundingBox.size.width, $0.boundingBox.size.height)
+        }
+        return YOLODecodeOutput(
+            detections: limited,
+            decodedCandidatesCount: candidates.count,
+            afterNMSCount: limited.count,
+            sampleBBoxText: sampleBBoxText
+        )
     }
 
     private func orientedImageSize(from sampleBuffer: CMSampleBuffer) -> CGSize {
