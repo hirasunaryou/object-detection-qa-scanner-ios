@@ -28,6 +28,7 @@ final class LiveViewModel: ObservableObject {
     @Published var latestFrame: CMSampleBuffer?
     @Published var secondsToStable: Double?
     @Published var modelStatusText: String = "No model loaded"
+    @Published var inferenceDebugText: String = "output=none"
     @Published var inferenceImageSize: CGSize = .zero
 
     let cameraManager: CameraManager
@@ -81,7 +82,7 @@ final class LiveViewModel: ObservableObject {
     }
 
     func applyModel(_ model: StoredModel, from modelStore: ModelStore) throws {
-        try inferenceEngine.loadModel(modelID: model.id, compiledModelURL: modelStore.compiledURL(for: model))
+        try inferenceEngine.loadModel(modelID: model.id, compiledModelURL: modelStore.compiledURL(for: model), classLabels: model.metadata.classes)
         modelStatusText = "Active model: \(model.metadata.displayName)"
         resetStabilityState()
     }
@@ -147,7 +148,7 @@ final class LiveViewModel: ObservableObject {
             inferenceImageSize = CGSize(width: height, height: width)
         }
 
-        inferenceEngine.infer(sampleBuffer: sampleBuffer) { [weak self] detections, latency in
+        inferenceEngine.infer(sampleBuffer: sampleBuffer) { [weak self] detections, latency, debugText in
             Task { @MainActor in
                 guard let self else { return }
                 self.isInferenceInFlight = false
@@ -161,6 +162,7 @@ final class LiveViewModel: ObservableObject {
 
                 self.latencyMs = latency
                 self.detections = detections
+                self.inferenceDebugText = debugText
                 // detections と 1:1 で対応するフレームを更新する。
                 // ここで更新しておけば、保存時に画像と検出結果のズレが発生しない。
                 self.lastInferenceFrame = sampleBuffer

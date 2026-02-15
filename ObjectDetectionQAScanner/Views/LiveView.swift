@@ -18,6 +18,7 @@ struct LiveView: View {
                     Label("Inference Latency: \(viewModel.latencyMs, specifier: "%.1f") ms", systemImage: "timer")
                     Text("Reason: \(viewModel.stableReason)")
                     Text("Flicker: \(viewModel.flickerCount)")
+                    Text("Debug: \(viewModel.inferenceDebugText)")
                 }
                 .font(.caption)
                 .padding(8)
