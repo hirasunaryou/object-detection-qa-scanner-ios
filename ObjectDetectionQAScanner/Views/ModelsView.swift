@@ -12,34 +12,7 @@ struct ModelsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Imported models") {
-                    if modelStore.models.isEmpty {
-                        Text("モデル未登録です。ZIP をインポートして開始してください。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ForEach(modelStore.models) { model in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(model.metadata.displayName)
-                                Text(model.metadata.modelID).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if modelStore.activeModelID == model.id {
-                                Text("Active").foregroundStyle(.green)
-                            }
-                            Button("Use") {
-                                modelStore.setActive(modelID: model.id)
-                                try? liveViewModel.applyModel(model, from: modelStore)
-                            }
-                        }
-                    }
-
-                    Button("Import ZIP") {
-                        showingImporter = true
-                    }
-                }
+                importedModelsSection
 
                 Section("Stability settings") {
                     Slider(value: $settingsStore.settings.confThreshold, in: 0.1...0.99) {
@@ -63,22 +36,70 @@ struct ModelsView: View {
                 allowedContentTypes: [.zip],
                 allowsMultipleSelection: false
             ) { result in
-                switch result {
-                case .success(let urls):
-                    guard let url = urls.first else { return }
-                    modelsViewModel.importZip(url: url)
-                    if let imported = modelStore.models.first(where: { $0.id == modelStore.activeModelID }) {
-                        try? liveViewModel.applyModel(imported, from: modelStore)
-                    }
-                case .failure(let error):
-                    modelsViewModel.importError = error.localizedDescription
-                }
+                handleImportResult(result)
             }
             .alert("Import Failed", isPresented: importErrorBinding) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(modelsViewModel.importError ?? "Unknown error")
             }
+        }
+    }
+
+    // MARK: - Sections
+
+    /// モデル一覧・選択・インポート導線をひとかたまりとして分離し、
+    /// 設定フォームとの責務分離を明確にする。
+    private var importedModelsSection: some View {
+        Section("Imported models") {
+            if modelStore.models.isEmpty {
+                Text("モデル未登録です。ZIP をインポートして開始してください。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(modelStore.models) { model in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(model.metadata.displayName)
+                        Text(model.metadata.modelID).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if modelStore.activeModelID == model.id {
+                        Text("Active").foregroundStyle(.green)
+                    }
+                    Button("Use") {
+                        activateModel(model)
+                    }
+                }
+            }
+
+            Button("Import ZIP") {
+                showingImporter = true
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func activateModel(_ model: StoredModel) {
+        modelStore.setActive(modelID: model.id)
+        try? liveViewModel.applyModel(model, from: modelStore)
+    }
+
+    private func handleImportResult(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            modelsViewModel.importZip(url: url)
+
+            // インポート成功時は activeModelID が更新されるので、
+            // そのIDを見て Live 側にも同じモデルを反映する。
+            if let imported = modelStore.models.first(where: { $0.id == modelStore.activeModelID }) {
+                try? liveViewModel.applyModel(imported, from: modelStore)
+            }
+        case .failure(let error):
+            modelsViewModel.importError = error.localizedDescription
         }
     }
 
