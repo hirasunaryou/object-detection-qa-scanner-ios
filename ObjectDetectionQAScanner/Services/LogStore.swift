@@ -1,11 +1,28 @@
 import Foundation
 import AVFoundation
 import UIKit
+import ImageIO
 
 final class LogStore {
+    enum LogStoreError: LocalizedError {
+        case failedToExtractPixelBuffer
+        case failedToEncodeJPEG(kind: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .failedToExtractPixelBuffer:
+                return "保存対象の画像バッファを取得できませんでした。"
+            case .failedToEncodeJPEG(let kind):
+                return "\(kind) 画像の JPEG エンコードに失敗しました。"
+            }
+        }
+    }
+
     private let root: URL
     private let logsURL: URL
     private let imagesDir: URL
+    // Vision推論と保存画像で向きを統一するため、ここでも .right を明示する。
+    private let inferenceOrientation: CGImagePropertyOrientation = .right
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -40,14 +57,21 @@ final class LogStore {
         let overlayURL = root.appendingPathComponent(overlayRelativePath)
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            throw NSError(domain: "LogStore", code: 1001)
+            throw LogStoreError.failedToExtractPixelBuffer
         }
 
-        let rawImage = Self.image(from: pixelBuffer)
-        try rawImage.jpegData(compressionQuality: 0.9)?.write(to: rawURL)
+        // Vision(.right) と同じ向きに正規化した画像を保存する。
+        let rawImage = Self.image(from: pixelBuffer, orientation: inferenceOrientation)
+        guard let rawJPEG = rawImage.jpegData(compressionQuality: 0.9) else {
+            throw LogStoreError.failedToEncodeJPEG(kind: "raw")
+        }
+        try rawJPEG.write(to: rawURL, options: .atomic)
 
         let overlayImage = Self.drawDetections(on: rawImage, detections: detections)
-        try overlayImage.jpegData(compressionQuality: 0.9)?.write(to: overlayURL)
+        guard let overlayJPEG = overlayImage.jpegData(compressionQuality: 0.9) else {
+            throw LogStoreError.failedToEncodeJPEG(kind: "overlay")
+        }
+        try overlayJPEG.write(to: overlayURL, options: .atomic)
 
         let entry = ScanLogEntry(
             id: UUID(),
@@ -90,10 +114,11 @@ final class LogStore {
             .compactMap { try? decoder.decode(ScanLogEntry.self, from: Data($0.utf8)) }
     }
 
-    private static func image(from pixelBuffer: CVPixelBuffer) -> UIImage {
+    private static func image(from pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> UIImage {
         let ci = CIImage(cvPixelBuffer: pixelBuffer)
+            .oriented(forExifOrientation: Int32(orientation.rawValue))
         let context = CIContext(options: nil)
-        let rect = CGRect(x: 0, y: 0, width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
+        let rect = ci.extent
         let cg = context.createCGImage(ci, from: rect)!
         return UIImage(cgImage: cg)
     }
