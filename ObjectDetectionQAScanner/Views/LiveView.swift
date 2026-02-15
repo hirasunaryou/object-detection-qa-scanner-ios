@@ -7,6 +7,7 @@ struct LiveView: View {
 
     @State private var selectedNGReason: NGReason = .other
     @State private var message = ""
+    @State private var isDebugPanelExpanded = true
 
     var body: some View {
         VStack(spacing: 12) {
@@ -17,11 +18,32 @@ struct LiveView: View {
                     .clipShape(RoundedRectangle(cornerRadius: previewCornerRadius))
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Inference FPS: \(viewModel.fps, specifier: "%.1f")", systemImage: "speedometer")
-                    Label("Inference Latency: \(viewModel.latencyMs, specifier: "%.1f") ms", systemImage: "timer")
-                    Text(viewModel.inferenceDebugText)
-                    Text("Reason: \(viewModel.stableReason)")
-                    Text("Flicker: \(viewModel.flickerCount)")
+                    // Live画面のオーバーレイは視認性が重要なので、
+                    // デバッグ情報は展開・折りたたみを切り替え可能にして邪魔になりにくくする。
+                    HStack(spacing: 8) {
+                        Label("Debug", systemImage: "ladybug")
+                            .fontWeight(.semibold)
+
+                        Spacer(minLength: 8)
+
+                        Button {
+                            isDebugPanelExpanded.toggle()
+                        } label: {
+                            Image(systemName: isDebugPanelExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption.weight(.bold))
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isDebugPanelExpanded ? "デバッグ情報を折りたたむ" : "デバッグ情報を展開する")
+                    }
+
+                    if isDebugPanelExpanded {
+                        Label("Inference FPS: \(viewModel.fps, specifier: "%.1f")", systemImage: "speedometer")
+                        Label("Inference Latency: \(viewModel.latencyMs, specifier: "%.1f") ms", systemImage: "timer")
+                        Text(viewModel.inferenceDebugText)
+                        Text("Reason: \(viewModel.stableReason)")
+                        Text("Flicker: \(viewModel.flickerCount)")
+                    }
                 }
                 .font(.caption)
                 .padding(8)
