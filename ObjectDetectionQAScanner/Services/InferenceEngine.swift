@@ -7,6 +7,9 @@ final class InferenceEngine {
     private var request: VNCoreMLRequest?
     private let queue = DispatchQueue(label: "inference.queue", qos: .userInitiated)
     private(set) var activeModelID: String?
+    // Liveプレビューは背面カメラの portrait 固定運用のため、Vision 側も同じ向きで評価する。
+    // `.up` を使うとバウンディングボックスの向きがズレるため、`.right` を利用する。
+    private let liveOrientation: CGImagePropertyOrientation = .right
 
     func loadModel(modelID: String, compiledModelURL: URL) throws {
         let model = try MLModel(contentsOf: compiledModelURL)
@@ -27,7 +30,7 @@ final class InferenceEngine {
 
         queue.async {
             let start = CFAbsoluteTimeGetCurrent()
-            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up)
+            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: self.liveOrientation)
             do {
                 try handler.perform([request])
                 // NOTE: `[]` が [Any] と推論されるのを避けるため、型を明示します。

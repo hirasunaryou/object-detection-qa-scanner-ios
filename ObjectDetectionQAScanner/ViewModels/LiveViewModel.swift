@@ -15,6 +15,7 @@ final class LiveViewModel: ObservableObject {
     @Published var latestFrame: CMSampleBuffer?
     @Published var secondsToStable: Double?
     @Published var modelStatusText: String = "No model loaded"
+    @Published var inferenceImageSize: CGSize = .zero
 
     let cameraManager: CameraManager
     private let inferenceEngine: InferenceEngine
@@ -23,7 +24,10 @@ final class LiveViewModel: ObservableObject {
     private var settingsStore: SettingsStore
     private var activeModelProvider: () -> StoredModel?
 
-    private var lastFrameTime = Date()
+    private var isInferenceInFlight = false
+    private var lastInferenceStart = Date.distantPast
+    private var lastInferenceCompletion = Date.distantPast
+    private let targetInferenceInterval: TimeInterval = 1.0 / 14.0
 
     init(
         cameraManager: CameraManager,
@@ -100,16 +104,34 @@ final class LiveViewModel: ObservableObject {
             return
         }
 
+        // 1) 推論は常に1本だけ実行する。
+        // 2) 実行開始間隔を最短 ~71ms (約14fps) に制限して、負荷スパイクと遅延蓄積を抑える。
         let now = Date()
-        let delta = now.timeIntervalSince(lastFrameTime)
-        lastFrameTime = now
-        if delta > 0 {
-            fps = 1.0 / delta
+        guard !isInferenceInFlight else { return }
+        guard now.timeIntervalSince(lastInferenceStart) >= targetInferenceInterval else { return }
+
+        isInferenceInFlight = true
+        lastInferenceStart = now
+
+        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            // `.right` で評価しているため、見た目上の portrait 画像サイズは w/h を入れ替える。
+            let width = CVPixelBufferGetWidth(pixelBuffer)
+            let height = CVPixelBufferGetHeight(pixelBuffer)
+            inferenceImageSize = CGSize(width: height, height: width)
         }
 
         inferenceEngine.infer(sampleBuffer: sampleBuffer) { [weak self] detections, latency in
             Task { @MainActor in
                 guard let self else { return }
+                self.isInferenceInFlight = false
+
+                let completedAt = Date()
+                let fpsDelta = completedAt.timeIntervalSince(self.lastInferenceCompletion)
+                self.lastInferenceCompletion = completedAt
+                if fpsDelta > 0 {
+                    self.fps = 1.0 / fpsDelta
+                }
+
                 self.latencyMs = latency
                 self.detections = detections
 
