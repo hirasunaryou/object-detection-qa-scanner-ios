@@ -59,10 +59,6 @@ final class InferenceEngine {
 
     private let yoloIouThreshold: Double = 0.45
     private let yoloMaxDetections: Int = 20
-    // Liveプレビューは背面カメラの portrait 固定運用のため、Vision 側も同じ向きで評価する。
-    // `.up` を使うとバウンディングボックスの向きがズレるため、`.right` を利用する。
-    private let liveOrientation: CGImagePropertyOrientation = .right
-
     init(debugLogStore: DebugLogStore = .shared) {
         self.debugLogStore = debugLogStore
     }
@@ -85,7 +81,13 @@ final class InferenceEngine {
         }
     }
 
-    func infer(sampleBuffer: CMSampleBuffer, confidenceThreshold: Double, completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void) {
+    func infer(
+        sampleBuffer: CMSampleBuffer,
+        orientation: CGImagePropertyOrientation,
+        orientedImageSize: CGSize,
+        confidenceThreshold: Double,
+        completion: @escaping ([Detection], Double, InferenceDebugInfo) -> Void
+    ) {
         guard let request else {
             debugLogStore.warn(tag: "InferenceEngine", message: "infer_skipped_no_model", fields: [:])
             completion([Detection](), 0, InferenceDebugInfo(outputType: "none", preprocessMode: nil, multiArrayShape: nil, decodedCandidatesCount: nil, afterNMSCount: nil, sampleBBoxText: nil, sampleMappedRectText: nil))
@@ -94,7 +96,7 @@ final class InferenceEngine {
 
         queue.async {
             let start = CFAbsoluteTimeGetCurrent()
-            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: self.liveOrientation)
+            let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: orientation)
             do {
                 try handler.perform([request])
                 let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
@@ -120,10 +122,9 @@ final class InferenceEngine {
 
                 if let featureObservations = request.results as? [VNCoreMLFeatureValueObservation],
                    let firstMultiArray = featureObservations.compactMap({ $0.featureValue.multiArrayValue }).first {
-                    let orientedSize = self.orientedImageSize(from: sampleBuffer)
                     let decoded = self.decodeYOLOv8(
                         multiArray: firstMultiArray,
-                        imageSize: orientedSize,
+                        imageSize: orientedImageSize,
                         modelInputSize: self.modelInputSize,
                         confidenceThreshold: confidenceThreshold
                     )
@@ -336,16 +337,6 @@ final class InferenceEngine {
             sampleBBoxText: sampleBBoxText,
             sampleMappedRectText: sampleMappedRectText
         )
-    }
-
-    private func orientedImageSize(from sampleBuffer: CMSampleBuffer) -> CGSize {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            return CGSize(width: 1, height: 1)
-        }
-        let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
-        let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-        // `.right` で評価しているため portrait 基準へ揃える。
-        return CGSize(width: height, height: width)
     }
 
     private func mapScaleFitRectToImage(

@@ -30,6 +30,7 @@ final class LiveViewModel: ObservableObject {
     @Published var modelStatusText: String = "No model loaded"
     @Published var inferenceImageSize: CGSize = .zero
     @Published var inferenceDebugText: String = "Output: -"
+    @Published var orientationDebugText: String = "orientation: -"
 
     let cameraManager: CameraManager
     private let inferenceEngine: InferenceEngine
@@ -44,6 +45,7 @@ final class LiveViewModel: ObservableObject {
     // 保存時に「検出結果と同じ入力フレーム」を使うため、
     // 推論完了時点の sampleBuffer を保持する（最新カメラフレームとは分ける）。
     private var lastInferenceFrame: CMSampleBuffer?
+    private var lastInferenceExifOrientation: CGImagePropertyOrientation = .right
     private let targetInferenceInterval: TimeInterval = 1.0 / 14.0
 
     init(
@@ -59,8 +61,8 @@ final class LiveViewModel: ObservableObject {
         self.settingsStore = settingsStore
         self.activeModelProvider = activeModelProvider
 
-        cameraManager.onFrame = { [weak self] sampleBuffer in
-            Task { await self?.handleFrame(sampleBuffer) }
+        cameraManager.onFrame = { [weak self] sampleBuffer, videoOrientation, isMirrored in
+            Task { await self?.handleFrame(sampleBuffer, videoOrientation: videoOrientation, isMirrored: isMirrored) }
         }
     }
 
@@ -122,12 +124,17 @@ final class LiveViewModel: ObservableObject {
             detections: detections,
             flickerCount: flickerCount,
             secondsToStable: secondsToStable,
-            sampleBuffer: frame
+            sampleBuffer: frame,
+            exifOrientation: lastInferenceExifOrientation
         )
         resetStabilityState()
     }
 
-    private func handleFrame(_ sampleBuffer: CMSampleBuffer) async {
+    private func handleFrame(
+        _ sampleBuffer: CMSampleBuffer,
+        videoOrientation: AVCaptureVideoOrientation,
+        isMirrored: Bool
+    ) async {
         latestFrame = sampleBuffer
         if inferenceEngine.activeModelID == nil {
             detections = []
@@ -145,14 +152,34 @@ final class LiveViewModel: ObservableObject {
         isInferenceInFlight = true
         lastInferenceStart = now
 
-        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-            // `.right` で評価しているため、見た目上の portrait 画像サイズは w/h を入れ替える。
-            let width = CVPixelBufferGetWidth(pixelBuffer)
-            let height = CVPixelBufferGetHeight(pixelBuffer)
-            inferenceImageSize = CGSize(width: height, height: width)
+        let exifOrientation = OrientationResolver.exifOrientation(videoOrientation: videoOrientation, isMirrored: isMirrored)
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            isInferenceInFlight = false
+            return
         }
+        let pixelBufferWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let pixelBufferHeight = CVPixelBufferGetHeight(pixelBuffer)
+        let orientedImageSize = OrientationResolver.orientedImageSize(
+            pixelBufferWidth: pixelBufferWidth,
+            pixelBufferHeight: pixelBufferHeight,
+            exifOrientation: exifOrientation
+        )
+        inferenceImageSize = orientedImageSize
+        orientationDebugText = Self.orientationDebugDescription(
+            videoOrientation: videoOrientation,
+            isMirrored: isMirrored,
+            exifOrientation: exifOrientation,
+            pixelBufferWidth: pixelBufferWidth,
+            pixelBufferHeight: pixelBufferHeight,
+            orientedImageSize: orientedImageSize
+        )
 
-        inferenceEngine.infer(sampleBuffer: sampleBuffer, confidenceThreshold: settingsStore.settings.confThreshold) { [weak self] detections, latency, debugInfo in
+        inferenceEngine.infer(
+            sampleBuffer: sampleBuffer,
+            orientation: exifOrientation,
+            orientedImageSize: orientedImageSize,
+            confidenceThreshold: settingsStore.settings.confThreshold
+        ) { [weak self] detections, latency, debugInfo in
             Task { @MainActor in
                 guard let self else { return }
                 self.isInferenceInFlight = false
@@ -170,6 +197,7 @@ final class LiveViewModel: ObservableObject {
                 // detections と 1:1 で対応するフレームを更新する。
                 // ここで更新しておけば、保存時に画像と検出結果のズレが発生しない。
                 self.lastInferenceFrame = sampleBuffer
+                self.lastInferenceExifOrientation = exifOrientation
 
                 let result = self.stabilityEvaluator.evaluate(detections: detections, settings: self.settingsStore.settings)
                 self.isStable = result.isStable
@@ -177,6 +205,45 @@ final class LiveViewModel: ObservableObject {
                 self.flickerCount = result.flickerCount
                 self.secondsToStable = result.secondsToStable
             }
+        }
+    }
+
+    private static func orientationDebugDescription(
+        videoOrientation: AVCaptureVideoOrientation,
+        isMirrored: Bool,
+        exifOrientation: CGImagePropertyOrientation,
+        pixelBufferWidth: Int,
+        pixelBufferHeight: Int,
+        orientedImageSize: CGSize
+    ) -> String {
+        "videoOrientation: \(videoOrientation.debugName) | isMirrored: \(isMirrored) | exifOrientation: \(exifOrientation.debugName) | pixelBuffer: \(pixelBufferWidth)x\(pixelBufferHeight) | orientedImageSize: \(Int(orientedImageSize.width))x\(Int(orientedImageSize.height))"
+    }
+}
+
+private extension AVCaptureVideoOrientation {
+    var debugName: String {
+        switch self {
+        case .portrait: return "portrait"
+        case .portraitUpsideDown: return "portraitUpsideDown"
+        case .landscapeRight: return "landscapeRight"
+        case .landscapeLeft: return "landscapeLeft"
+        @unknown default: return "unknown"
+        }
+    }
+}
+
+private extension CGImagePropertyOrientation {
+    var debugName: String {
+        switch self {
+        case .up: return "up"
+        case .upMirrored: return "upMirrored"
+        case .down: return "down"
+        case .downMirrored: return "downMirrored"
+        case .left: return "left"
+        case .leftMirrored: return "leftMirrored"
+        case .right: return "right"
+        case .rightMirrored: return "rightMirrored"
+        @unknown default: return "unknown"
         }
     }
 }
