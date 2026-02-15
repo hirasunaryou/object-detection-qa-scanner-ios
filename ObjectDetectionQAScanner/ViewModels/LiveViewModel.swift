@@ -13,6 +13,7 @@ final class LiveViewModel: ObservableObject {
     @Published var latencyMs: Double = 0
     @Published var flickerCount: Int = 0
     @Published var latestFrame: CMSampleBuffer?
+    @Published var latestFrameDimensions: CGSize = .zero
     @Published var secondsToStable: Double?
     @Published var modelStatusText: String = "No model loaded"
 
@@ -23,7 +24,11 @@ final class LiveViewModel: ObservableObject {
     private var settingsStore: SettingsStore
     private var activeModelProvider: () -> StoredModel?
 
-    private var lastFrameTime = Date()
+    // 推論負荷を安定させるため、最大15fps相当で推論要求を間引きます。
+    private let targetInferenceInterval: CFTimeInterval = 1.0 / 15.0
+    private var isInferenceInFlight = false
+    private var lastInferenceDispatchTime: CFAbsoluteTime = 0
+    private var lastInferenceCompletionTime: CFAbsoluteTime = 0
 
     init(
         cameraManager: CameraManager,
@@ -93,6 +98,13 @@ final class LiveViewModel: ObservableObject {
 
     private func handleFrame(_ sampleBuffer: CMSampleBuffer) async {
         latestFrame = sampleBuffer
+        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            latestFrameDimensions = CGSize(
+                width: CVPixelBufferGetWidth(pixelBuffer),
+                height: CVPixelBufferGetHeight(pixelBuffer)
+            )
+        }
+
         if inferenceEngine.activeModelID == nil {
             detections = []
             isStable = false
@@ -100,17 +112,33 @@ final class LiveViewModel: ObservableObject {
             return
         }
 
-        let now = Date()
-        let delta = now.timeIntervalSince(lastFrameTime)
-        lastFrameTime = now
-        if delta > 0 {
-            fps = 1.0 / delta
+        // 1) 同時実行を禁止（in-flight がある間は次フレームをスキップ）
+        // 2) 推論投入間隔を制御（約15fps上限）
+        let now = CFAbsoluteTimeGetCurrent()
+        guard !isInferenceInFlight, now - lastInferenceDispatchTime >= targetInferenceInterval else {
+            return
         }
 
-        inferenceEngine.infer(sampleBuffer: sampleBuffer) { [weak self] detections, latency in
+        isInferenceInFlight = true
+        lastInferenceDispatchTime = now
+
+        inferenceEngine.infer(sampleBuffer: sampleBuffer, orientation: .right) { [weak self] detections, latency in
             Task { @MainActor in
                 guard let self else { return }
+                self.isInferenceInFlight = false
+
                 self.latencyMs = latency
+                let completionTime = CFAbsoluteTimeGetCurrent()
+                if self.lastInferenceCompletionTime > 0 {
+                    let delta = completionTime - self.lastInferenceCompletionTime
+                    if delta > 0 {
+                        let instantaneousFPS = 1.0 / delta
+                        // 実測値の揺れを抑えるために軽く平滑化します。
+                        self.fps = self.fps == 0 ? instantaneousFPS : (self.fps * 0.7 + instantaneousFPS * 0.3)
+                    }
+                }
+                self.lastInferenceCompletionTime = completionTime
+
                 self.detections = detections
 
                 let result = self.stabilityEvaluator.evaluate(detections: detections, settings: self.settingsStore.settings)

@@ -22,20 +22,36 @@ final class PreviewUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer.videoGravity = .resizeAspectFill
+        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
     }
 }
 
 struct DetectionOverlayView: View {
     let detections: [Detection]
+    let sourceImageSize: CGSize
 
     var body: some View {
         GeometryReader { geo in
+            // Vision座標は orientation適用後の画像空間を基準にするため、
+            // .right 指定時は width/height を入れ替えた portrait 空間で扱います。
+            let orientedSourceSize = CGSize(width: sourceImageSize.height, height: sourceImageSize.width)
+            let scale = max(
+                geo.size.width / max(orientedSourceSize.width, 1),
+                geo.size.height / max(orientedSourceSize.height, 1)
+            )
+            let displayedWidth = orientedSourceSize.width * scale
+            let displayedHeight = orientedSourceSize.height * scale
+            let xOffset = (geo.size.width - displayedWidth) / 2
+            let yOffset = (geo.size.height - displayedHeight) / 2
+
             ForEach(detections) { det in
                 let rect = CGRect(
-                    x: det.boundingBox.minX * geo.size.width,
-                    y: (1 - det.boundingBox.maxY) * geo.size.height,
-                    width: det.boundingBox.width * geo.size.width,
-                    height: det.boundingBox.height * geo.size.height
+                    x: xOffset + det.boundingBox.minX * displayedWidth,
+                    y: yOffset + (1 - det.boundingBox.maxY) * displayedHeight,
+                    width: det.boundingBox.width * displayedWidth,
+                    height: det.boundingBox.height * displayedHeight
                 )
                 ZStack(alignment: .topLeading) {
                     Rectangle()

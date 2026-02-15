@@ -11,7 +11,10 @@ struct LiveView: View {
             ZStack(alignment: .topLeading) {
                 CameraPreviewView(session: viewModel.cameraManager.session)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
-                DetectionOverlayView(detections: viewModel.detections)
+                DetectionOverlayView(
+                    detections: viewModel.detections,
+                    sourceImageSize: viewModel.latestFrameDimensions
+                )
 
                 VStack(alignment: .leading, spacing: 6) {
                     Label("FPS: \(viewModel.fps, specifier: "%.1f")", systemImage: "speedometer")
